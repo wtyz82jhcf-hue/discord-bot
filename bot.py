@@ -5,6 +5,31 @@ import json
 import os
 import random
 
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+    def log_message(self, format, *args):
+        pass
+
+
+def start_web_server():
+    port = int(os.environ.get("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+
+    thread = threading.Thread(
+        target=server.serve_forever,
+        daemon=True
+    )
+
+    thread.start()
+    
 # =========================================================
 # EINSTELLUNGEN
 # =========================================================
@@ -1169,16 +1194,16 @@ if __name__ == "__main__":
         print("======================================")
         print("FEHLER: DISCORD_TOKEN fehlt.")
         print("======================================")
-
     else:
 
         try:
             import asyncio
 
+            start_web_server()
             asyncio.run(main())
 
         except discord.LoginFailure:
-
+            
             print("======================================")
             print("FEHLER: Der Discord-Token ist falsch.")
             print("======================================")
