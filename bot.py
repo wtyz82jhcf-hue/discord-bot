@@ -5,9 +5,9 @@ import json
 import os
 import random
 import asyncio
+import threading
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import threading
 
 
 # =========================================================
@@ -34,10 +34,6 @@ NAMETAG_ROLE_ID = 1520102928398942348
 SHIFT_PERMISSION_ROLE_ID = 1523674698574200904
 DEVELOPER_SHIFT_ROLE_ID = 1527372148979798086
 
-OWNER_ROLE_ID = 1544691379613999164
-SUGGESTION_REVIEW_ROLE_ID = 1530188150456979526
-
-NAMETAG = "RLP | "
 PREFIX = "?"
 DATA_FILE = "bot_data.json"
 
@@ -45,12 +41,13 @@ NUMBER_GAME_MAX = 10**18
 
 
 # =========================================================
-# BOT
+# INTENTS
 # =========================================================
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+
 
 bot = commands.Bot(
     command_prefix=PREFIX,
@@ -92,10 +89,15 @@ def load_data():
 def save_data():
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as file:
-            json.dump(data, file, indent=4, ensure_ascii=False)
+            json.dump(
+                data,
+                file,
+                indent=4,
+                ensure_ascii=False
+            )
 
     except Exception as e:
-        print(f"Fehler beim Speichern der Daten: {e}")
+        print(f"Fehler beim Speichern: {e}")
 
 
 # =========================================================
@@ -110,7 +112,11 @@ def has_role(member, role_id):
     return any(role.id == role_id for role in member.roles)
 
 
-def make_embed(title, description, color=discord.Color.blue()):
+def make_embed(
+    title,
+    description="",
+    color=discord.Color.blue()
+):
     return discord.Embed(
         title=title,
         description=description,
@@ -118,59 +124,23 @@ def make_embed(title, description, color=discord.Color.blue()):
     )
 
 
-async def send_log(message):
-    channel = get_channel(SHIFT_LOG_CHANNEL_ID)
+def member_info(user_id):
+    """
+    Gibt Ping, Name und User-ID zurück.
+    """
 
-    if channel:
-        try:
-            await channel.send(message)
-        except Exception as e:
-            print(f"Log-Fehler: {e}")
+    user = bot.get_user(int(user_id))
 
+    if user:
+        return (
+            f"{user.mention}\n"
+            f"**Name:** {user}\n"
+            f"**User-ID:** `{user.id}`"
+        )
 
-def get_active_shifts():
-    result = set()
-
-    for user_id in data.get("active_shifts", []):
-        try:
-            result.add(int(user_id))
-        except (ValueError, TypeError):
-            pass
-
-    return result
-
-
-def save_active_shifts(active_shifts):
-    data["active_shifts"] = list(active_shifts)
-    save_data()
-
-
-def create_shift_embed():
-    active_shifts = get_active_shifts()
-
-    description = (
-        "Klicke auf **Schicht starten**, um deine Entwicklerschicht zu beginnen.\n\n"
-        "Klicke auf **Schicht beenden**, um deine Schicht zu beenden."
-    )
-
-    if active_shifts:
-        description += "\n\n👥 **Aktive Entwickler:**\n"
-
-        for user_id in active_shifts:
-            member = bot.get_user(user_id)
-
-            if member:
-                description += f"• {member.mention}\n"
-            else:
-                description += f"• <@{user_id}>\n"
-
-    else:
-        description += "\n\n👥 **Aktive Entwickler:**\n• Keine"
-
-    return make_embed(
-        "🛠️ Entwicklerschicht",
-        description,
-        discord.Color.green()
+    return (
+        f"<@{user_id}>\n"
+        f"**User-ID:** `{user_id}`"
     )
 
 
@@ -191,7 +161,9 @@ async def status_loop():
     index = 0
 
     while not bot.is_closed():
+
         try:
+
             await bot.change_presence(
                 status=discord.Status.online,
                 activity=discord.Game(
@@ -204,7 +176,9 @@ async def status_loop():
             await asyncio.sleep(10)
 
         except Exception as e:
+
             print(f"Status-Fehler: {e}")
+
             await asyncio.sleep(10)
 
 
@@ -215,16 +189,26 @@ async def status_loop():
 class HealthHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
+
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running")
+
+        self.wfile.write(
+            b"Bot is running"
+        )
 
     def log_message(self, format, *args):
         pass
 
 
 def start_web_server():
-    port = int(os.environ.get("PORT", "10000"))
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            "10000"
+        )
+    )
 
     server = HTTPServer(
         ("0.0.0.0", port),
@@ -238,14 +222,19 @@ def start_web_server():
 
     thread.start()
 
-    print(f"Webserver gestartet auf Port {port}")
+    print(
+        f"Webserver gestartet auf Port {port}"
+    )
 
 
 # =========================================================
 # NAMETAG
 # =========================================================
 
-class NametagModal(ui.Modal, title="Nametag setzen"):
+class NametagModal(
+    ui.Modal,
+    title="🏷️ Nametag setzen"
+):
 
     nametag = ui.TextInput(
         label="Nametag",
@@ -253,19 +242,32 @@ class NametagModal(ui.Modal, title="Nametag setzen"):
         max_length=32
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
 
-        if not has_role(interaction.user, NAMETAG_ROLE_ID):
+        if not has_role(
+            interaction.user,
+            NAMETAG_ROLE_ID
+        ):
+
             await interaction.response.send_message(
                 "❌ Du hast keine Berechtigung dafür.",
                 ephemeral=True
             )
+
             return
 
-        new_nickname = f"{NAMETAG}{self.nametag.value}"
+        new_nickname = (
+            f"RLP | {self.nametag.value}"
+        )
 
         try:
-            await interaction.user.edit(nick=new_nickname)
+
+            await interaction.user.edit(
+                nick=new_nickname
+            )
 
             await interaction.response.send_message(
                 f"✅ Dein Nametag wurde auf **{new_nickname}** gesetzt.",
@@ -273,6 +275,7 @@ class NametagModal(ui.Modal, title="Nametag setzen"):
             )
 
         except discord.Forbidden:
+
             await interaction.response.send_message(
                 "❌ Ich kann deinen Nickname nicht ändern.",
                 ephemeral=True
@@ -282,7 +285,10 @@ class NametagModal(ui.Modal, title="Nametag setzen"):
 class NametagView(ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @ui.button(
         label="Nametag setzen",
@@ -295,14 +301,20 @@ class NametagView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        await interaction.response.send_modal(NametagModal())
+
+        await interaction.response.send_modal(
+            NametagModal()
+        )
 
 
 # =========================================================
 # KENNZEICHEN
 # =========================================================
 
-class LicensePlateModal(ui.Modal, title="Kennzeichen setzen"):
+class LicensePlateModal(
+    ui.Modal,
+    title="🚗 Kennzeichen setzen"
+):
 
     plate = ui.TextInput(
         label="Kennzeichen",
@@ -310,15 +322,23 @@ class LicensePlateModal(ui.Modal, title="Kennzeichen setzen"):
         max_length=20
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
 
-        user_id = str(interaction.user.id)
+        user_id = str(
+            interaction.user.id
+        )
 
-        data["license_plates"][user_id] = self.plate.value.upper()
+        plate = self.plate.value.upper()
+
+        data["license_plates"][user_id] = plate
+
         save_data()
 
         await interaction.response.send_message(
-            f"🚗 Dein Kennzeichen wurde auf **{self.plate.value.upper()}** gesetzt.",
+            f"🚗 Dein Kennzeichen wurde auf **{plate}** gesetzt.",
             ephemeral=True
         )
 
@@ -326,7 +346,10 @@ class LicensePlateModal(ui.Modal, title="Kennzeichen setzen"):
 class LicensePlateView(ui.View):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @ui.button(
         label="Kennzeichen setzen",
@@ -339,7 +362,10 @@ class LicensePlateView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        await interaction.response.send_modal(LicensePlateModal())
+
+        await interaction.response.send_modal(
+            LicensePlateModal()
+        )
 
     @ui.button(
         label="Kennzeichen entfernen",
@@ -352,16 +378,22 @@ class LicensePlateView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        user_id = str(interaction.user.id)
+
+        user_id = str(
+            interaction.user.id
+        )
 
         if user_id not in data["license_plates"]:
+
             await interaction.response.send_message(
                 "❌ Du hast kein Kennzeichen gespeichert.",
                 ephemeral=True
             )
+
             return
 
         del data["license_plates"][user_id]
+
         save_data()
 
         await interaction.response.send_message(
@@ -374,66 +406,187 @@ class LicensePlateView(ui.View):
 # ENTWICKLER AUFGABEN
 # =========================================================
 
-class DeveloperTaskModal(ui.Modal, title="Neue Entwickleraufgabe"):
+class DeveloperTaskModal(
+    ui.Modal,
+    title="🛠️ Neue Entwickleraufgabe"
+):
 
-    title_input = ui.TextInput(
+    task = ui.TextInput(
         label="Aufgabe",
         placeholder="Was soll erledigt werden?",
-        max_length=100
-    )
-
-    description_input = ui.TextInput(
-        label="Beschreibung",
-        placeholder="Weitere Informationen...",
         style=discord.TextStyle.paragraph,
-        required=False,
         max_length=1000
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
 
-        task_id = str(random.randint(100000, 999999))
+        task_id = str(
+            random.randint(
+                100000,
+                999999
+            )
+        )
+
+        # Sicherstellen, dass ID nicht doppelt ist
+        while task_id in data["tasks"]:
+
+            task_id = str(
+                random.randint(
+                    100000,
+                    999999
+                )
+            )
 
         data["tasks"][task_id] = {
-            "title": self.title_input.value,
-            "description": self.description_input.value,
+            "task": self.task.value,
             "creator": interaction.user.id,
             "taken_by": None,
-            "done": False
+            "done_by": None
         }
 
         save_data()
 
-        channel = get_channel(DEVELOPER_TASK_CHANNEL_ID)
+        channel = get_channel(
+            DEVELOPER_TASK_CHANNEL_ID
+        )
 
-        if channel:
-            embed = make_embed(
-                f"🛠️ {self.title_input.value}",
-                self.description_input.value or "Keine Beschreibung.",
-                discord.Color.blue()
+        if channel is None:
+
+            await interaction.response.send_message(
+                "❌ Der Entwickler-Aufgaben-Channel wurde nicht gefunden.",
+                ephemeral=True
             )
 
-            embed.add_field(
-                name="📌 Status",
-                value="🟡 Offen",
-                inline=False
-            )
+            return
 
-            await channel.send(
-                embed=embed,
-                view=DeveloperTaskView(task_id)
+        embed = create_task_embed(
+            task_id
+        )
+
+        await channel.send(
+            embed=embed,
+            view=DeveloperTaskView(
+                task_id
             )
+        )
 
         await interaction.response.send_message(
-            "✅ Entwickleraufgabe erstellt.",
+            "✅ Die Entwickleraufgabe wurde erstellt.",
             ephemeral=True
         )
 
 
-class DeveloperTaskPanelView(ui.View):
+def create_task_embed(task_id):
+
+    task = data["tasks"].get(
+        task_id
+    )
+
+    if not task:
+
+        return make_embed(
+            "❌ Aufgabe nicht gefunden",
+            "Diese Aufgabe existiert nicht mehr.",
+            discord.Color.red()
+        )
+
+    creator_id = task["creator"]
+    taken_by = task.get("taken_by")
+    done_by = task.get("done_by")
+
+    if done_by:
+
+        status = "🟢 **Erledigt**"
+
+    elif taken_by:
+
+        status = "🟡 **In Bearbeitung**"
+
+    else:
+
+        status = "🔵 **Offen**"
+
+    embed = make_embed(
+        "🛠️ Entwickleraufgabe",
+        "",
+        discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="📋 Aufgabe",
+        value=task["task"],
+        inline=False
+    )
+
+    embed.add_field(
+        name="👤 Erstellt von",
+        value=member_info(
+            creator_id
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📊 Status",
+        value=status,
+        inline=False
+    )
+
+    if taken_by:
+
+        embed.add_field(
+            name="🙋 Übernommen von",
+            value=member_info(
+                taken_by
+            ),
+            inline=False
+        )
+
+    else:
+
+        embed.add_field(
+            name="🙋 Übernommen von",
+            value="Niemand",
+            inline=False
+        )
+
+    if done_by:
+
+        embed.add_field(
+            name="✅ Erledigt von",
+            value=member_info(
+                done_by
+            ),
+            inline=False
+        )
+
+    else:
+
+        embed.add_field(
+            name="✅ Erledigt von",
+            value="Noch nicht erledigt",
+            inline=False
+        )
+
+    embed.set_footer(
+        text=f"Aufgaben-ID: {task_id}"
+    )
+
+    return embed
+
+
+class DeveloperTaskPanelView(
+    ui.View
+):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @ui.button(
         label="Aufgabe erstellen",
@@ -446,19 +599,41 @@ class DeveloperTaskPanelView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        await interaction.response.send_modal(DeveloperTaskModal())
+
+        await interaction.response.send_modal(
+            DeveloperTaskModal()
+        )
 
 
-class DeveloperTaskView(ui.View):
+class DeveloperTaskView(
+    ui.View
+):
 
-    def __init__(self, task_id):
-        super().__init__(timeout=None)
+    def __init__(
+        self,
+        task_id
+    ):
 
-        self.task_id = task_id
+        super().__init__(
+            timeout=None
+        )
 
-        self.children[0].custom_id = f"task_take_{task_id}"
-        self.children[1].custom_id = f"task_done_{task_id}"
-        self.children[2].custom_id = f"task_delete_{task_id}"
+        self.task_id = str(
+            task_id
+        )
+
+        # Persistente Custom IDs
+        self.children[0].custom_id = (
+            f"task_take_{self.task_id}"
+        )
+
+        self.children[1].custom_id = (
+            f"task_done_{self.task_id}"
+        )
+
+        self.children[2].custom_id = (
+            f"task_delete_{self.task_id}"
+        )
 
     @ui.button(
         label="Übernehmen",
@@ -470,21 +645,49 @@ class DeveloperTaskView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        task = data["tasks"].get(self.task_id)
+
+        task = data["tasks"].get(
+            self.task_id
+        )
 
         if not task:
+
             await interaction.response.send_message(
                 "❌ Diese Aufgabe existiert nicht mehr.",
                 ephemeral=True
             )
+
+            return
+
+        if task.get("done_by"):
+
+            await interaction.response.send_message(
+                "❌ Diese Aufgabe ist bereits erledigt.",
+                ephemeral=True
+            )
+
+            return
+
+        if task.get("taken_by"):
+
+            await interaction.response.send_message(
+                f"⚠️ Diese Aufgabe wurde bereits von <@{task['taken_by']}> übernommen.",
+                ephemeral=True
+            )
+
             return
 
         task["taken_by"] = interaction.user.id
+
         save_data()
 
-        await interaction.response.send_message(
-            "🙋 Du hast die Aufgabe übernommen.",
-            ephemeral=True
+        await interaction.response.edit_message(
+            embed=create_task_embed(
+                self.task_id
+            ),
+            view=DeveloperTaskView(
+                self.task_id
+            )
         )
 
     @ui.button(
@@ -497,20 +700,49 @@ class DeveloperTaskView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        task = data["tasks"].get(self.task_id)
+
+        task = data["tasks"].get(
+            self.task_id
+        )
 
         if not task:
+
             await interaction.response.send_message(
                 "❌ Diese Aufgabe existiert nicht mehr.",
                 ephemeral=True
             )
+
             return
 
-        task["done"] = True
+        if task.get("done_by"):
+
+            await interaction.response.send_message(
+                "⚠️ Diese Aufgabe wurde bereits erledigt.",
+                ephemeral=True
+            )
+
+            return
+
+        if not task.get("taken_by"):
+
+            await interaction.response.send_message(
+                "❌ Die Aufgabe muss zuerst übernommen werden.",
+                ephemeral=True
+            )
+
+            return
+
+        task["done_by"] = interaction.user.id
+
         save_data()
 
-        await interaction.response.send_message(
-            "✅ Aufgabe wurde als erledigt markiert."
+        await interaction.response.edit_message(
+            embed=create_task_embed(
+                self.task_id
+            ),
+            view=DeveloperTaskView(
+                self.task_id
+            )
         )
 
     @ui.button(
@@ -523,19 +755,32 @@ class DeveloperTaskView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        if not has_role(interaction.user, OWNER_ROLE_ID):
+
+        if not interaction.user.guild_permissions.administrator:
+
             await interaction.response.send_message(
-                "❌ Nur der Owner darf Aufgaben löschen.",
+                "❌ Nur Administratoren dürfen Aufgaben löschen.",
                 ephemeral=True
             )
+
             return
 
         if self.task_id in data["tasks"]:
-            del data["tasks"][self.task_id]
+
+            del data["tasks"][
+                self.task_id
+            ]
+
             save_data()
 
-        await interaction.response.send_message(
-            "🗑️ Aufgabe wurde gelöscht."
+        await interaction.response.edit_message(
+            embed=make_embed(
+                "🗑️ Aufgabe gelöscht",
+                f"Die Aufgabe `{self.task_id}` wurde von "
+                f"{interaction.user.mention} gelöscht.",
+                discord.Color.red()
+            ),
+            view=None
         )
 
 
@@ -543,10 +788,115 @@ class DeveloperTaskView(ui.View):
 # ENTWICKLERSCHICHT
 # =========================================================
 
-class DeveloperShiftView(ui.View):
+def get_active_shifts():
+
+    result = set()
+
+    for user_id in data.get(
+        "active_shifts",
+        []
+    ):
+
+        try:
+
+            result.add(
+                int(user_id)
+            )
+
+        except (
+            ValueError,
+            TypeError
+        ):
+
+            pass
+
+    return result
+
+
+def save_active_shifts(
+    active_shifts
+):
+
+    data["active_shifts"] = list(
+        active_shifts
+    )
+
+    save_data()
+
+
+def create_shift_embed():
+
+    active_shifts = get_active_shifts()
+
+    embed = make_embed(
+        "🛠️ Entwicklerschicht",
+        "Verwalte hier deine Entwicklerschicht.",
+        discord.Color.green()
+    )
+
+    if active_shifts:
+
+        users = []
+
+        for user_id in active_shifts:
+
+            users.append(
+                f"• <@{user_id}>"
+            )
+
+        embed.add_field(
+            name="🟢 Aktive Entwickler",
+            value="\n".join(users),
+            inline=False
+        )
+
+    else:
+
+        embed.add_field(
+            name="🟢 Aktive Entwickler",
+            value="Niemand ist aktuell in einer Schicht.",
+            inline=False
+        )
+
+    return embed
+
+
+async def send_shift_log(
+    message
+):
+
+    channel = get_channel(
+        SHIFT_LOG_CHANNEL_ID
+    )
+
+    if channel:
+
+        try:
+
+            await channel.send(
+                embed=make_embed(
+                    "🕐 Schichtprotokoll",
+                    message,
+                    discord.Color.blue()
+                )
+            )
+
+        except Exception as e:
+
+            print(
+                f"Schicht-Log-Fehler: {e}"
+            )
+
+
+class DeveloperShiftView(
+    ui.View
+):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @ui.button(
         label="Schicht starten",
@@ -559,36 +909,59 @@ class DeveloperShiftView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        if not has_role(interaction.user, SHIFT_PERMISSION_ROLE_ID):
+
+        if not has_role(
+            interaction.user,
+            SHIFT_PERMISSION_ROLE_ID
+        ):
+
             await interaction.response.send_message(
                 "❌ Du hast keine Berechtigung für Entwicklerschichten.",
                 ephemeral=True
             )
+
             return
 
         active_shifts = get_active_shifts()
 
         if interaction.user.id in active_shifts:
+
             await interaction.response.send_message(
                 "⚠️ Du bist bereits in einer Schicht.",
                 ephemeral=True
             )
+
             return
 
-        active_shifts.add(interaction.user.id)
-        save_active_shifts(active_shifts)
+        active_shifts.add(
+            interaction.user.id
+        )
 
-        role = interaction.guild.get_role(DEVELOPER_SHIFT_ROLE_ID)
+        save_active_shifts(
+            active_shifts
+        )
+
+        role = interaction.guild.get_role(
+            DEVELOPER_SHIFT_ROLE_ID
+        )
 
         if role:
+
             try:
-                await interaction.user.add_roles(role)
+
+                await interaction.user.add_roles(
+                    role
+                )
+
             except discord.Forbidden:
+
                 pass
 
-        await send_log(
-            f"🟢 **Schicht gestartet**\n"
-            f"👤 {interaction.user.mention}"
+        await send_shift_log(
+            f"🟢 {interaction.user.mention}\n"
+            f"**Name:** {interaction.user}\n"
+            f"**User-ID:** `{interaction.user.id}`\n\n"
+            f"hat seine Entwicklerschicht gestartet."
         )
 
         await interaction.response.edit_message(
@@ -607,29 +980,47 @@ class DeveloperShiftView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
+
         active_shifts = get_active_shifts()
 
         if interaction.user.id not in active_shifts:
+
             await interaction.response.send_message(
                 "⚠️ Du bist aktuell in keiner Schicht.",
                 ephemeral=True
             )
+
             return
 
-        active_shifts.remove(interaction.user.id)
-        save_active_shifts(active_shifts)
+        active_shifts.remove(
+            interaction.user.id
+        )
 
-        role = interaction.guild.get_role(DEVELOPER_SHIFT_ROLE_ID)
+        save_active_shifts(
+            active_shifts
+        )
+
+        role = interaction.guild.get_role(
+            DEVELOPER_SHIFT_ROLE_ID
+        )
 
         if role:
+
             try:
-                await interaction.user.remove_roles(role)
+
+                await interaction.user.remove_roles(
+                    role
+                )
+
             except discord.Forbidden:
+
                 pass
 
-        await send_log(
-            f"🔴 **Schicht beendet**\n"
-            f"👤 {interaction.user.mention}"
+        await send_shift_log(
+            f"🔴 {interaction.user.mention}\n"
+            f"**Name:** {interaction.user}\n"
+            f"**User-ID:** `{interaction.user.id}`\n\n"
+            f"hat seine Entwicklerschicht beendet."
         )
 
         await interaction.response.edit_message(
@@ -642,7 +1033,10 @@ class DeveloperShiftView(ui.View):
 # ZAHLENSPIEL
 # =========================================================
 
-class NumberGuessModal(ui.Modal, title="Zahl erraten"):
+class NumberGuessModal(
+    ui.Modal,
+    title="🔢 Zahl erraten"
+):
 
     guess = ui.TextInput(
         label="Deine Zahl",
@@ -650,35 +1044,65 @@ class NumberGuessModal(ui.Modal, title="Zahl erraten"):
         max_length=19
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
 
-        channel_id = str(interaction.channel.id)
+        channel_id = str(
+            interaction.channel.id
+        )
 
         if channel_id not in data["number_game"]:
+
             await interaction.response.send_message(
-                "❌ Es läuft hier gerade kein Zahlenspiel.",
+                "❌ Hier läuft gerade kein Zahlenspiel.",
                 ephemeral=True
             )
+
             return
 
         try:
-            number = int(self.guess.value)
+
+            number = int(
+                self.guess.value
+            )
+
         except ValueError:
+
             await interaction.response.send_message(
                 "❌ Bitte gib eine gültige Zahl ein.",
                 ephemeral=True
             )
+
             return
 
-        target = data["number_game"][channel_id]
+        if number < 1 or number > NUMBER_GAME_MAX:
+
+            await interaction.response.send_message(
+                f"❌ Die Zahl muss zwischen **1** und **{NUMBER_GAME_MAX:,}** liegen.",
+                ephemeral=True
+            )
+
+            return
+
+        target = data["number_game"][
+            channel_id
+        ]
 
         if number == target:
 
             await interaction.response.send_message(
-                f"🎉 **Richtig!** {interaction.user.mention} hat die Zahl erraten!",
+                embed=make_embed(
+                    "🎉 Richtige Zahl!",
+                    f"{interaction.user.mention} hat die Zahl erraten!",
+                    discord.Color.green()
+                )
             )
 
-            data["number_game"][channel_id] = random.randint(
+            data["number_game"][
+                channel_id
+            ] = random.randint(
                 1,
                 NUMBER_GAME_MAX
             )
@@ -688,22 +1112,27 @@ class NumberGuessModal(ui.Modal, title="Zahl erraten"):
         elif number < target:
 
             await interaction.response.send_message(
-                "📈 Die gesuchte Zahl ist **größer**!",
+                "📈 Die gesuchte Zahl ist **größer**.",
                 ephemeral=True
             )
 
         else:
 
             await interaction.response.send_message(
-                "📉 Die gesuchte Zahl ist **kleiner**!",
+                "📉 Die gesuchte Zahl ist **kleiner**.",
                 ephemeral=True
             )
 
 
-class NumberGameView(ui.View):
+class NumberGameView(
+    ui.View
+):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @ui.button(
         label="Zahl erraten",
@@ -716,7 +1145,10 @@ class NumberGameView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        await interaction.response.send_modal(NumberGuessModal())
+
+        await interaction.response.send_modal(
+            NumberGuessModal()
+        )
 
     @ui.button(
         label="Neue Zahl",
@@ -729,7 +1161,10 @@ class NumberGameView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        data["number_game"][str(interaction.channel.id)] = random.randint(
+
+        data["number_game"][
+            str(interaction.channel.id)
+        ] = random.randint(
             1,
             NUMBER_GAME_MAX
         )
@@ -737,7 +1172,11 @@ class NumberGameView(ui.View):
         save_data()
 
         await interaction.response.send_message(
-            "🔄 Eine neue Zahl wurde ausgewählt.",
+            embed=make_embed(
+                "🔄 Neue Zahl",
+                "Eine neue Zahl wurde ausgewählt.",
+                discord.Color.green()
+            ),
             ephemeral=True
         )
 
@@ -746,7 +1185,10 @@ class NumberGameView(ui.View):
 # COMMUNITY
 # =========================================================
 
-class FeedbackModal(ui.Modal, title="Feedback"):
+class FeedbackModal(
+    ui.Modal,
+    title="💬 Feedback"
+):
 
     feedback = ui.TextInput(
         label="Dein Feedback",
@@ -755,30 +1197,51 @@ class FeedbackModal(ui.Modal, title="Feedback"):
         max_length=1500
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
 
-        channel = get_channel(FEEDBACK_CHANNEL_ID)
+        channel = get_channel(
+            FEEDBACK_CHANNEL_ID
+        )
 
         if channel:
+
             embed = make_embed(
                 "💬 Neues Community-Feedback",
                 self.feedback.value,
                 discord.Color.blue()
             )
 
-            embed.set_footer(
-                text=f"Von {interaction.user}"
+            embed.add_field(
+                name="👤 Von",
+                value=(
+                    f"{interaction.user.mention}\n"
+                    f"**Name:** {interaction.user}\n"
+                    f"**User-ID:** `{interaction.user.id}`"
+                ),
+                inline=False
             )
 
-            await channel.send(embed=embed)
+            await channel.send(
+                embed=embed
+            )
 
         await interaction.response.send_message(
-            "✅ Danke für dein Feedback!",
+            embed=make_embed(
+                "💙 Danke!",
+                "Danke für dein Feedback!",
+                discord.Color.green()
+            ),
             ephemeral=True
         )
 
 
-class SuggestionModal(ui.Modal, title="Vorschlag"):
+class SuggestionModal(
+    ui.Modal,
+    title="💡 Vorschlag"
+):
 
     suggestion = ui.TextInput(
         label="Dein Vorschlag",
@@ -787,33 +1250,56 @@ class SuggestionModal(ui.Modal, title="Vorschlag"):
         max_length=1500
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(
+        self,
+        interaction: discord.Interaction
+    ):
 
-        channel = get_channel(SUGGESTION_CHANNEL_ID)
+        channel = get_channel(
+            SUGGESTION_CHANNEL_ID
+        )
 
         if channel:
+
             embed = make_embed(
                 "💡 Neuer Community-Vorschlag",
                 self.suggestion.value,
                 discord.Color.gold()
             )
 
-            embed.set_footer(
-                text=f"Von {interaction.user}"
+            embed.add_field(
+                name="👤 Von",
+                value=(
+                    f"{interaction.user.mention}\n"
+                    f"**Name:** {interaction.user}\n"
+                    f"**User-ID:** `{interaction.user.id}`"
+                ),
+                inline=False
             )
 
-            await channel.send(embed=embed)
+            await channel.send(
+                embed=embed
+            )
 
         await interaction.response.send_message(
-            "✅ Danke für deinen Vorschlag!",
+            embed=make_embed(
+                "💙 Danke!",
+                "Danke für deinen Vorschlag!",
+                discord.Color.green()
+            ),
             ephemeral=True
         )
 
 
-class CommunityView(ui.View):
+class CommunityView(
+    ui.View
+):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @ui.button(
         label="Feedback",
@@ -826,7 +1312,10 @@ class CommunityView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        await interaction.response.send_modal(FeedbackModal())
+
+        await interaction.response.send_modal(
+            FeedbackModal()
+        )
 
     @ui.button(
         label="Vorschlag",
@@ -839,13 +1328,21 @@ class CommunityView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        await interaction.response.send_modal(SuggestionModal())
+
+        await interaction.response.send_modal(
+            SuggestionModal()
+        )
 
 
-class CommunityPanelView(ui.View):
+class CommunityPanelView(
+    ui.View
+):
 
     def __init__(self):
-        super().__init__(timeout=None)
+
+        super().__init__(
+            timeout=None
+        )
 
     @ui.button(
         label="Feedback senden",
@@ -858,7 +1355,10 @@ class CommunityPanelView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        await interaction.response.send_modal(FeedbackModal())
+
+        await interaction.response.send_modal(
+            FeedbackModal()
+        )
 
     @ui.button(
         label="Vorschlag senden",
@@ -871,7 +1371,10 @@ class CommunityPanelView(ui.View):
         interaction: discord.Interaction,
         button: ui.Button
     ):
-        await interaction.response.send_modal(SuggestionModal())
+
+        await interaction.response.send_modal(
+            SuggestionModal()
+        )
 
 
 # =========================================================
@@ -884,7 +1387,7 @@ async def nametag(ctx):
 
     embed = make_embed(
         "🏷️ Nametag-System",
-        "Klicke auf den Button, um deinen Nametag zu setzen.",
+        "Klicke auf **Nametag setzen**, um deinen Nametag zu ändern.",
         discord.Color.blue()
     )
 
@@ -915,9 +1418,15 @@ async def kennzeichen(ctx):
 async def entwickler(ctx):
 
     embed = make_embed(
-        "🛠️ Entwickler-Aufgaben",
+        "🛠️ Entwickler-System",
         "Erstelle hier neue Aufgaben für das Entwicklerteam.",
         discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="📌 Hinweis",
+        value="Neue Aufgaben werden automatisch im Entwickler-Aufgaben-Channel erstellt.",
+        inline=False
     )
 
     await ctx.send(
@@ -930,10 +1439,8 @@ async def entwickler(ctx):
 @commands.has_permissions(administrator=True)
 async def schicht(ctx):
 
-    embed = create_shift_embed()
-
     await ctx.send(
-        embed=embed,
+        embed=create_shift_embed(),
         view=DeveloperShiftView()
     )
 
@@ -942,7 +1449,9 @@ async def schicht(ctx):
 @commands.has_permissions(administrator=True)
 async def zahlenspiel(ctx):
 
-    data["number_game"][str(ctx.channel.id)] = random.randint(
+    data["number_game"][
+        str(ctx.channel.id)
+    ] = random.randint(
         1,
         NUMBER_GAME_MAX
     )
@@ -951,8 +1460,14 @@ async def zahlenspiel(ctx):
 
     embed = make_embed(
         "🔢 Zahlenspiel",
-        f"Errate eine Zahl zwischen **1** und **{NUMBER_GAME_MAX:,}**!",
+        f"Errate eine Zahl zwischen **1** und **{NUMBER_GAME_MAX:,}**.",
         discord.Color.purple()
+    )
+
+    embed.add_field(
+        name="🎯 Ziel",
+        value="Finde die geheime Zahl!",
+        inline=False
     )
 
     await ctx.send(
@@ -967,8 +1482,20 @@ async def community(ctx):
 
     embed = make_embed(
         "💙 Community",
-        "Teile dein Feedback oder sende uns einen Vorschlag!",
+        "Deine Meinung ist uns wichtig!",
         discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="💬 Feedback",
+        value="Teile uns deine Meinung mit.",
+        inline=True
+    )
+
+    embed.add_field(
+        name="💡 Vorschlag",
+        value="Hast du eine Idee? Schick sie uns!",
+        inline=True
     )
 
     await ctx.send(
@@ -983,8 +1510,20 @@ async def communitypanel(ctx):
 
     embed = make_embed(
         "🌟 Community Panel",
-        "Hier kannst du direkt Feedback oder Vorschläge an das Team senden.",
+        "Hier kannst du direkt Feedback und Vorschläge an das Team senden.",
         discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="💬 Feedback",
+        value="Wir freuen uns über deine Meinung.",
+        inline=True
+    )
+
+    embed.add_field(
+        name="💡 Vorschlag",
+        value="Verbesserungsidee? Immer her damit!",
+        inline=True
     )
 
     await ctx.send(
@@ -997,19 +1536,92 @@ async def communitypanel(ctx):
 async def helpme(ctx):
 
     embed = make_embed(
-        "📚 Bot-Hilfe",
-        "**Verfügbare Befehle:**\n\n"
-        "`?nametag` – Nametag-System\n"
-        "`?kennzeichen` – Kennzeichen-System\n"
-        "`?entwickler` – Entwickler-Aufgaben\n"
-        "`?schicht` – Entwicklerschichten\n"
-        "`?zahlenspiel` – Zahlenspiel\n"
-        "`?community` – Community-System\n"
-        "`?communitypanel` – Community Panel",
+        "📚 RLP Bot Hilfe",
+        "Hier findest du die verfügbaren Befehle.",
         discord.Color.blue()
     )
 
-    await ctx.send(embed=embed)
+    embed.add_field(
+        name="🏷️ Nametag",
+        value="`?nametag`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🚗 Kennzeichen",
+        value="`?kennzeichen`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🛠️ Entwickler",
+        value="`?entwickler`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🕐 Schicht",
+        value="`?schicht`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🔢 Zahlenspiel",
+        value="`?zahlenspiel`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="💙 Community",
+        value="`?community`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🌟 Community Panel",
+        value="`?communitypanel`",
+        inline=False
+    )
+
+    await ctx.send(
+        embed=embed
+    )
+
+
+# =========================================================
+# FEHLERBEHANDLUNG
+# =========================================================
+
+@bot.event
+async def on_command_error(
+    ctx,
+    error
+):
+
+    if isinstance(
+        error,
+        commands.CommandNotFound
+    ):
+        return
+
+    if isinstance(
+        error,
+        commands.MissingPermissions
+    ):
+
+        await ctx.send(
+            embed=make_embed(
+                "❌ Keine Berechtigung",
+                "Du benötigst Administrator-Rechte für diesen Befehl.",
+                discord.Color.red()
+            )
+        )
+
+        return
+
+    print(
+        f"Command-Fehler: {error}"
+    )
 
 
 # =========================================================
@@ -1020,36 +1632,69 @@ async def setup_persistent_views():
 
     load_data()
 
-    bot.add_view(NametagView())
-    bot.add_view(LicensePlateView())
-    bot.add_view(DeveloperTaskPanelView())
-    bot.add_view(DeveloperShiftView())
-    bot.add_view(NumberGameView())
-    bot.add_view(CommunityView())
-    bot.add_view(CommunityPanelView())
+    bot.add_view(
+        NametagView()
+    )
 
-    for task_id in list(data["tasks"].keys()):
+    bot.add_view(
+        LicensePlateView()
+    )
+
+    bot.add_view(
+        DeveloperTaskPanelView()
+    )
+
+    bot.add_view(
+        DeveloperShiftView()
+    )
+
+    bot.add_view(
+        NumberGameView()
+    )
+
+    bot.add_view(
+        CommunityView()
+    )
+
+    bot.add_view(
+        CommunityPanelView()
+    )
+
+    # Bereits vorhandene Aufgaben wieder registrieren
+    for task_id in list(
+        data["tasks"].keys()
+    ):
+
         try:
+
             bot.add_view(
-                DeveloperTaskView(task_id)
+                DeveloperTaskView(
+                    task_id
+                )
             )
+
         except Exception as e:
+
             print(
                 f"Fehler bei Aufgabe {task_id}: {e}"
             )
 
 
 # =========================================================
-# STARTUP
+# MAIN
 # =========================================================
 
 async def main():
 
     await setup_persistent_views()
 
-    asyncio.create_task(status_loop())
+    asyncio.create_task(
+        status_loop()
+    )
 
-    await bot.start(TOKEN)
+    await bot.start(
+        TOKEN
+    )
 
 
 # =========================================================
@@ -1060,7 +1705,9 @@ if __name__ == "__main__":
 
     if not TOKEN:
 
-        print("FEHLER: DISCORD_TOKEN fehlt.")
+        print(
+            "FEHLER: DISCORD_TOKEN fehlt."
+        )
 
     else:
 
@@ -1068,12 +1715,18 @@ if __name__ == "__main__":
 
             start_web_server()
 
-            asyncio.run(main())
+            asyncio.run(
+                main()
+            )
 
         except discord.LoginFailure:
 
-            print("FEHLER: Discord-Token ist falsch.")
+            print(
+                "FEHLER: Discord-Token ist falsch."
+            )
 
         except Exception as e:
 
-            print(f"FEHLER: {e}")
+            print(
+                f"FEHLER: {e}"
+            )
