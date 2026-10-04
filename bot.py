@@ -10,7 +10,7 @@ import asyncio
 # EINSTELLUNGEN
 # =========================================================
 
-TOKEN = os.getenv("MEIN_TOKEN")
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 GUILD_ID = 1519481018221072454
 
