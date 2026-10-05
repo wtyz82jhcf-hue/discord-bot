@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # KONFIGURATION
 # =========================================================
 
-TOKEN = "test"
+TOKEN = os.getenv("TEST")
 
 GUILD_ID = 1519481018221072454
 
