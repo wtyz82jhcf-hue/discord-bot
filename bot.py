@@ -1,14 +1,11 @@
 import discord
 from discord.ext import commands
-from discord import ui
-
-import asyncio
-import json
+from discord import app_commands
 import os
-import random
+import json
+import asyncio
 import tempfile
 from datetime import datetime
-
 
 # =========================================================
 # KONFIGURATION
@@ -16,7 +13,6 @@ from datetime import datetime
 
 PREFIX = "?"
 DATA_FILE = "bot_data.json"
-
 GUILD_ID = 1519481018221072454
 
 NAMETAG_CHANNEL_ID = 1555684071911202836
@@ -41,15 +37,13 @@ DEVELOPER_TASK_PING_ROLE_ID = 1523674698574200904
 
 COMMUNITY_PANEL_PERMISSION_ROLE_ID = 1544679876206796930
 
-NAMETAG = "RLP | "
-
 
 # =========================================================
-# TOKEN AUS .ENV
+# TOKEN AUS .ENV LADEN
 # =========================================================
 
 def load_env_file():
-    token = os.getenv("DEIN_TOKEN")
+    token = os.getenv("DISCORD_TOKEN")
 
     if token:
         return token.strip()
@@ -59,9 +53,7 @@ def load_env_file():
 
     try:
         with open(".env", "r", encoding="utf-8") as file:
-
             for line in file:
-
                 line = line.strip()
 
                 if not line or line.startswith("#"):
@@ -72,14 +64,8 @@ def load_env_file():
 
                 key, value = line.split("=", 1)
 
-                key = key.strip()
-                value = value.strip()
-
-                if key == "DISCORD_TOKEN":
-
-                    value = value.strip('"').strip("'")
-
-                    return value
+                if key.strip() == "DISCORD_TOKEN":
+                    return value.strip().strip('"').strip("'")
 
     except Exception as e:
         print(f"Fehler beim Lesen der .env: {e}")
@@ -98,11 +84,9 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-
 bot = commands.Bot(
     command_prefix=PREFIX,
-    intents=intents,
-    help_command=None
+    intents=intents
 )
 
 
@@ -111,73 +95,65 @@ bot = commands.Bot(
 # =========================================================
 
 DEFAULT_DATA = {
+    "nametags": {},
     "license_plates": {},
     "tasks": {},
-    "active_shifts": [],
+    "active_shifts": {},
     "applications": {},
-    "panel_messages": {}
+    "panel_messages": {},
+    "next_task_id": 1,
+    "next_application_id": 1
 }
 
 
-data = {}
+def deep_merge(default, current):
+    if isinstance(default, dict) and isinstance(current, dict):
+        result = {}
 
-
-def deep_merge(defaults, loaded):
-
-    result = {}
-
-    for key, value in defaults.items():
-
-        if isinstance(value, dict):
-
-            loaded_value = loaded.get(key, {})
-
-            if isinstance(loaded_value, dict):
-                result[key] = deep_merge(value, loaded_value)
+        for key, value in default.items():
+            if key in current:
+                result[key] = deep_merge(value, current[key])
             else:
-                result[key] = value.copy()
+                result[key] = value
 
-        elif isinstance(value, list):
+        for key, value in current.items():
+            if key not in result:
+                result[key] = value
 
-            loaded_value = loaded.get(key, [])
+        return result
 
-            if isinstance(loaded_value, list):
-                result[key] = loaded_value.copy()
-            else:
-                result[key] = value.copy()
+    return current
 
-        else:
 
-            result[key] = loaded.get(key, value)
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return deep_merge(DEFAULT_DATA, {})
 
-    for key, value in loaded.items():
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            current = json.load(file)
 
-        if key not in result:
-            result[key] = value
+        return deep_merge(DEFAULT_DATA, current)
 
-    return result
+    except Exception as e:
+        print(f"Fehler beim Laden der Daten: {e}")
+        return deep_merge(DEFAULT_DATA, {})
+
+
+data = load_data()
 
 
 def save_data():
-
     try:
-
-        directory = os.path.dirname(
-            os.path.abspath(DATA_FILE)
-        )
+        directory = os.path.dirname(os.path.abspath(DATA_FILE))
 
         fd, temp_path = tempfile.mkstemp(
-            dir=directory,
             prefix="bot_data_",
-            suffix=".tmp"
+            suffix=".tmp",
+            dir=directory
         )
 
-        with os.fdopen(
-            fd,
-            "w",
-            encoding="utf-8"
-        ) as file:
-
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
             json.dump(
                 data,
                 file,
@@ -185,64 +161,38 @@ def save_data():
                 ensure_ascii=False
             )
 
-        os.replace(
-            temp_path,
-            DATA_FILE
-        )
+        os.replace(temp_path, DATA_FILE)
 
     except Exception as e:
-
         print(f"Fehler beim Speichern: {e}")
-
-
-def load_data():
-
-    global data
-
-    loaded = {}
-
-    if os.path.exists(DATA_FILE):
-
-        try:
-
-            with open(
-                DATA_FILE,
-                "r",
-                encoding="utf-8"
-            ) as file:
-
-                loaded = json.load(file)
-
-            if not isinstance(loaded, dict):
-                loaded = {}
-
-        except Exception as e:
-
-            print(f"Fehler beim Laden der Daten: {e}")
-
-    data = deep_merge(
-        DEFAULT_DATA,
-        loaded
-    )
-
-    # Altes Zahlenspiel vollständig entfernen
-    data.pop("number_game", None)
-
-    save_data()
-
-
-load_data()
 
 
 # =========================================================
 # HILFSFUNKTIONEN
 # =========================================================
 
-async def get_or_fetch_channel(channel_id):
+def get_user_info(user):
+    return (
+        f"{user.mention} ♡ Name: {user.name}. "
+        f"ID: `{user.id}`"
+    )
 
+
+def has_role(member, role_id):
+    return any(role.id == role_id for role in member.roles)
+
+
+def has_shift_permission(member):
+    return member.guild_permissions.administrator or has_role(
+        member,
+        SHIFT_PERMISSION_ROLE_ID
+    )
+
+
+async def get_or_fetch_channel(channel_id):
     channel = bot.get_channel(channel_id)
 
-    if channel:
+    if channel is not None:
         return channel
 
     try:
@@ -251,767 +201,537 @@ async def get_or_fetch_channel(channel_id):
         return None
 
 
-def is_admin(member):
-    return member.guild_permissions.administrator
+async def get_guild():
+    guild = bot.get_guild(GUILD_ID)
+
+    if guild is not None:
+        return guild
+
+    try:
+        return await bot.fetch_guild(GUILD_ID)
+    except Exception:
+        return None
 
 
-def has_role(member, role_id):
-
-    return any(
-        role.id == role_id
-        for role in member.roles
-    )
-
-
-def can_use_role(member, role_id):
-
-    return (
-        is_admin(member)
-        or has_role(member, role_id)
-    )
-
-
-def user_text(user):
-
-    return (
-        f"{user.mention} ♡ Name: {user.name}. "
-        f"ID: `{user.id}`"
-    )
-
-
-def make_embed(
-    title,
-    description="",
-    color=None
-):
-
-    if color is None:
-        color = discord.Color.blurple()
-
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=color
-    )
-
-    embed.timestamp = datetime.now()
-
-    return embed
+def now_time():
+    return datetime.now().strftime("%H:%M Uhr")
 
 
 # =========================================================
 # NAMETAG
 # =========================================================
 
-class NametagModal(
-    ui.Modal,
-    title="Nametag ändern"
-):
+class NametagModal(discord.ui.Modal, title="Nametag ändern"):
 
-    name = ui.TextInput(
-        label="Dein Name",
-        placeholder="Gib deinen Namen ein",
-        max_length=30
+    nametag = discord.ui.TextInput(
+        label="Neuer Nametag",
+        placeholder="z. B. RyZe",
+        max_length=32,
+        required=True
     )
 
-    async def on_submit(self, interaction):
+    async def on_submit(self, interaction: discord.Interaction):
 
-        if not has_role(
-            interaction.user,
-            NAMETAG_ROLE_ID
-        ):
+        member = interaction.guild.get_member(interaction.user.id)
 
+        if member is None:
             await interaction.response.send_message(
-                "❌ Du hast keine Berechtigung für das Nametag-System.",
+                "❌ Mitglied konnte nicht gefunden werden.",
                 ephemeral=True
             )
             return
 
-        name = self.name.value.strip()
-
-        if not name:
-
+        if not has_role(member, NAMETAG_ROLE_ID):
             await interaction.response.send_message(
-                "❌ Bitte gib einen Namen ein.",
+                "❌ Du hast keine Berechtigung, deinen Nametag zu ändern.",
                 ephemeral=True
             )
             return
-
-        new_nick = f"{NAMETAG}{name}"
 
         try:
+            await member.edit(nick=str(self.nametag))
 
-            await interaction.user.edit(
-                nick=new_nick
-            )
+            data["nametags"][str(member.id)] = str(self.nametag)
+            save_data()
 
             await interaction.response.send_message(
-                f"✅ Dein Nametag wurde geändert.",
+                f"✅ Dein Nametag wurde auf **{self.nametag}** geändert.",
                 ephemeral=True
             )
 
         except discord.Forbidden:
-
             await interaction.response.send_message(
-                "❌ Ich kann deinen Nickname nicht ändern. "
-                "Meine Bot-Rolle muss über deiner Rolle stehen.",
+                "❌ Der Bot kann deinen Nicknamen nicht ändern.",
                 ephemeral=True
             )
 
 
-class NametagView(ui.View):
+class NametagView(discord.ui.View):
 
     def __init__(self):
+        super().__init__(timeout=None)
 
-        super().__init__(
-            timeout=None
-        )
+    @discord.ui.button(
+        label="Nametag ändern",
+        style=discord.ButtonStyle.primary,
+        emoji="🏷️",
+        custom_id="nametag_change"
+    )
+    async def change(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await interaction.response.send_modal(NametagModal())
 
-        button = ui.Button(
-            label="Nametag ändern",
-            style=discord.ButtonStyle.primary,
-            emoji="🏷️",
-            custom_id="nametag_change"
-        )
 
-        button.callback = self.change_nametag
-
-        self.add_item(button)
-
-    async def change_nametag(self, interaction):
-
-        await interaction.response.send_modal(
-            NametagModal()
-        )
+def create_nametag_embed():
+    return discord.Embed(
+        title="🏷️ Nametag-System",
+        description=(
+            "Mit dem Button unten kannst du deinen Discord-Namen "
+            "auf deinen gewünschten Nametag ändern."
+        ),
+        color=discord.Color.blurple()
+    )
 
 
 # =========================================================
 # KENNZEICHEN
 # =========================================================
 
-def get_user_plate(user_id):
-
-    return data["license_plates"].get(
-        str(user_id)
-    )
-
-
 def create_license_panel_embed():
-
-    embed = make_embed(
-        "🚘 Kennzeichen-System",
-        "Verwalte hier dein persönliches Kennzeichen.\n\n"
-        "Mit **Kennzeichen setzen** kannst du ein neues "
-        "Kennzeichen speichern oder dein bestehendes ändern.\n\n"
-        "Mit **Kennzeichen entfernen** wird es sofort "
-        "aus diesem Panel entfernt.",
-        discord.Color.blue()
+    embed = discord.Embed(
+        title="🚘 Kennzeichen-System",
+        description=(
+            "Hier kannst du dein Kennzeichen verwalten.\n\n"
+            "Alle aktuell gespeicherten Kennzeichen:"
+        ),
+        color=discord.Color.blurple()
     )
 
-    plates = data.get(
-        "license_plates",
-        {}
-    )
+    plates = data.get("license_plates", {})
 
     if not plates:
-
         embed.add_field(
-            name="📋 Aktuelle Kennzeichen",
-            value="Noch keine Kennzeichen eingetragen.",
+            name="Keine Kennzeichen",
+            value="Aktuell sind keine Kennzeichen gespeichert.",
             inline=False
         )
-
     else:
-
         lines = []
 
         for user_id, plate in plates.items():
-
             lines.append(
                 f"🚘 <@{user_id}> — **{plate}**"
             )
 
-        text = "\n".join(lines)
-
-        if len(text) > 4000:
-            text = text[:3990] + "\n..."
-
         embed.add_field(
-            name="📋 Aktuelle Kennzeichen",
-            value=text,
+            name="Aktuelle Kennzeichen",
+            value="\n".join(lines),
             inline=False
         )
-
-    embed.set_footer(
-        text="RLP • Kennzeichen-System"
-    )
 
     return embed
 
 
-async def refresh_license_panel():
+class LicensePlateModal(discord.ui.Modal, title="Kennzeichen setzen"):
 
-    channel = await get_or_fetch_channel(
-        LICENSE_PLATE_CHANNEL_ID
-    )
-
-    if not channel:
-        return
-
-    message_id = data["panel_messages"].get(
-        "license_plate"
-    )
-
-    if not message_id:
-        return
-
-    try:
-
-        message = await channel.fetch_message(
-            int(message_id)
-        )
-
-        await message.edit(
-            embed=create_license_panel_embed(),
-            view=LicensePlateView()
-        )
-
-    except discord.NotFound:
-
-        message = await channel.send(
-            embed=create_license_panel_embed(),
-            view=LicensePlateView()
-        )
-
-        data["panel_messages"][
-            "license_plate"
-        ] = message.id
-
-        save_data()
-
-    except discord.Forbidden:
-
-        print(
-            "Keine Berechtigung für das Kennzeichen-Panel."
-        )
-
-    except Exception as e:
-
-        print(
-            f"Kennzeichen-Panel Fehler: {e}"
-        )
-
-
-class LicensePlateModal(
-    ui.Modal,
-    title="Kennzeichen setzen"
-):
-
-    plate = ui.TextInput(
+    plate = discord.ui.TextInput(
         label="Kennzeichen",
-        placeholder="z.B. GM-RL 123",
-        max_length=20
+        placeholder="z. B. GM-RZ 123",
+        max_length=20,
+        required=True
     )
 
-    async def on_submit(self, interaction):
+    async def on_submit(self, interaction: discord.Interaction):
 
-        plate = self.plate.value.strip()
+        plate_value = str(self.plate).strip().upper()
 
-        if not plate:
-
-            await interaction.response.send_message(
-                "❌ Bitte gib ein Kennzeichen ein.",
-                ephemeral=True
-            )
-            return
-
-        data["license_plates"][
-            str(interaction.user.id)
-        ] = plate
-
+        data["license_plates"][str(interaction.user.id)] = plate_value
         save_data()
 
         await refresh_license_panel()
 
         await interaction.response.send_message(
-            f"✅ Dein Kennzeichen **{plate}** wurde gespeichert.",
+            f"✅ Dein Kennzeichen wurde auf **{plate_value}** gesetzt.",
             ephemeral=True
         )
 
 
-class LicensePlateView(ui.View):
+class LicensePlateView(discord.ui.View):
 
     def __init__(self):
+        super().__init__(timeout=None)
 
-        super().__init__(
-            timeout=None
-        )
+    @discord.ui.button(
+        label="Kennzeichen setzen",
+        style=discord.ButtonStyle.success,
+        emoji="🚘",
+        custom_id="license_set"
+    )
+    async def set_plate(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await interaction.response.send_modal(LicensePlateModal())
 
-        set_button = ui.Button(
-            label="Kennzeichen setzen",
-            style=discord.ButtonStyle.primary,
-            emoji="🚘",
-            custom_id="plate_set"
-        )
-
-        show_button = ui.Button(
-            label="Mein Kennzeichen",
-            style=discord.ButtonStyle.secondary,
-            emoji="👁️",
-            custom_id="plate_show"
-        )
-
-        remove_button = ui.Button(
-            label="Kennzeichen entfernen",
-            style=discord.ButtonStyle.danger,
-            emoji="🗑️",
-            custom_id="plate_remove"
-        )
-
-        set_button.callback = self.set_plate
-        show_button.callback = self.show_plate
-        remove_button.callback = self.remove_plate
-
-        self.add_item(set_button)
-        self.add_item(show_button)
-        self.add_item(remove_button)
-
-    async def set_plate(self, interaction):
-
-        await interaction.response.send_modal(
-            LicensePlateModal()
-        )
-
-    async def show_plate(self, interaction):
-
-        plate = get_user_plate(
-            interaction.user.id
-        )
+    @discord.ui.button(
+        label="Mein Kennzeichen",
+        style=discord.ButtonStyle.primary,
+        emoji="📋",
+        custom_id="license_show"
+    )
+    async def show_plate(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        plate = data["license_plates"].get(str(interaction.user.id))
 
         if not plate:
-
             await interaction.response.send_message(
-                "ℹ️ Du hast aktuell kein Kennzeichen gespeichert.",
+                "❌ Du hast noch kein Kennzeichen gespeichert.",
                 ephemeral=True
             )
             return
 
         await interaction.response.send_message(
-            f"🚘 Dein aktuelles Kennzeichen: **{plate}**",
+            f"🚘 Dein Kennzeichen: **{plate}**",
             ephemeral=True
         )
 
-    async def remove_plate(self, interaction):
-
-        user_id = str(
-            interaction.user.id
-        )
+    @discord.ui.button(
+        label="Kennzeichen entfernen",
+        style=discord.ButtonStyle.danger,
+        emoji="🗑️",
+        custom_id="license_remove"
+    )
+    async def remove_plate(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        user_id = str(interaction.user.id)
 
         if user_id not in data["license_plates"]:
-
             await interaction.response.send_message(
-                "ℹ️ Du hast aktuell kein Kennzeichen gespeichert.",
+                "❌ Du hast kein Kennzeichen gespeichert.",
                 ephemeral=True
             )
             return
 
-        old_plate = data["license_plates"].pop(
-            user_id
-        )
-
+        old_plate = data["license_plates"].pop(user_id)
         save_data()
 
-        # Panel sofort aktualisieren
         await refresh_license_panel()
 
         await interaction.response.send_message(
-            f"🗑️ Dein Kennzeichen **{old_plate}** wurde entfernt.",
+            f"✅ Das Kennzeichen **{old_plate}** wurde entfernt.",
             ephemeral=True
         )
 
 
+async def refresh_license_panel():
+
+    channel = await get_or_fetch_channel(LICENSE_PLATE_CHANNEL_ID)
+
+    if channel is None:
+        return
+
+    message_id = data["panel_messages"].get("license")
+
+    message = None
+
+    if message_id:
+        try:
+            message = await channel.fetch_message(int(message_id))
+        except Exception:
+            message = None
+
+    if message is not None:
+        try:
+            await message.edit(
+                embed=create_license_panel_embed(),
+                view=LicensePlateView()
+            )
+            return
+        except Exception:
+            pass
+
+    try:
+        async for old_message in channel.history(limit=50):
+            if (
+                old_message.author.id == bot.user.id
+                and old_message.embeds
+                and old_message.embeds[0].title == "🚘 Kennzeichen-System"
+            ):
+                try:
+                    await old_message.delete()
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+
+    try:
+        new_message = await channel.send(
+            embed=create_license_panel_embed(),
+            view=LicensePlateView()
+        )
+
+        data["panel_messages"]["license"] = new_message.id
+        save_data()
+
+    except Exception as e:
+        print(f"Fehler beim License-Panel: {e}")
+
+
 # =========================================================
-# ENTWICKLER-AUFGABEN
+# DEVELOPER AUFGABEN
 # =========================================================
 
-def create_task_embed(task_id):
+def task_user_info(user_id):
 
-    task = data["tasks"].get(
-        str(task_id)
-    )
+    user = bot.get_user(int(user_id))
 
-    if not task:
-        return None
+    if user:
+        return get_user_info(user)
 
-    if task.get("done"):
+    return f"<@{user_id}> ♡ ID: `{user_id}`"
 
-        status = "🟢 Erledigt"
 
-    elif task.get("taken_by"):
+def create_task_embed(task):
 
-        status = "🟡 In Bearbeitung"
+    status = task.get("status", "open")
 
+    if status == "done":
+        status_text = "🟢 Erledigt"
+    elif status == "taken":
+        status_text = "🟡 In Bearbeitung"
     else:
+        status_text = "⚪ Offen"
 
-        status = "⚪ Offen"
-
-    creator = bot.get_user(
-        int(task["creator"])
-    )
-
-    creator_text = (
-        user_text(creator)
-        if creator
-        else f"<@{task['creator']}>"
-    )
-
-    taken_text = (
-        f"<@{task['taken_by']}>"
-        if task.get("taken_by")
-        else "Niemand"
-    )
-
-    done_text = (
-        f"<@{task['done_by']}>"
-        if task.get("done_by")
-        else "Noch nicht erledigt"
-    )
-
-    embed = make_embed(
-        "🛠️ Entwickleraufgabe",
-        color=discord.Color.orange()
+    embed = discord.Embed(
+        title="🛠️ Entwickleraufgabe",
+        color=(
+            discord.Color.green()
+            if status == "done"
+            else discord.Color.orange()
+            if status == "taken"
+            else discord.Color.blurple()
+        )
     )
 
     embed.add_field(
         name="📋 Aufgabe",
-        value=task["text"],
+        value=task["description"],
         inline=False
     )
 
     embed.add_field(
         name="👤 Erstellt von",
-        value=creator_text,
+        value=task_user_info(task["creator_id"]),
         inline=False
     )
 
     embed.add_field(
         name="📊 Status",
-        value=status,
-        inline=False
+        value=status_text,
+        inline=True
     )
+
+    taken_by = task.get("taken_by")
 
     embed.add_field(
         name="🙋 Übernommen von",
-        value=taken_text,
-        inline=False
+        value=(
+            task_user_info(taken_by)
+            if taken_by
+            else "Niemand"
+        ),
+        inline=True
     )
+
+    done_by = task.get("done_by")
 
     embed.add_field(
         name="✅ Erledigt von",
-        value=done_text,
+        value=(
+            task_user_info(done_by)
+            if done_by
+            else "Noch nicht erledigt"
+        ),
         inline=False
     )
 
     embed.add_field(
         name="Aufgaben-ID",
-        value=f"`{task_id}`",
+        value=f"`{task['id']}`",
         inline=False
     )
 
     return embed
 
 
-class DeveloperTaskModal(
-    ui.Modal,
-    title="Neue Entwickleraufgabe"
-):
-
-    task = ui.TextInput(
-        label="Aufgabe",
-        placeholder="Beschreibe die Aufgabe...",
-        style=discord.TextStyle.paragraph,
-        max_length=1500
-    )
-
-    async def on_submit(self, interaction):
-
-        task_id = str(
-            random.randint(
-                100000,
-                999999
-            )
-        )
-
-        while task_id in data["tasks"]:
-
-            task_id = str(
-                random.randint(
-                    100000,
-                    999999
-                )
-            )
-
-        data["tasks"][task_id] = {
-            "text": self.task.value.strip(),
-            "creator": interaction.user.id,
-            "taken_by": None,
-            "done": False,
-            "done_by": None,
-            "message_id": None
-        }
-
-        save_data()
-
-        channel = await get_or_fetch_channel(
-            DEVELOPER_TASK_CHANNEL_ID
-        )
-
-        if not channel:
-
-            await interaction.response.send_message(
-                "❌ Aufgaben-Kanal nicht gefunden.",
-                ephemeral=True
-            )
-            return
-
-        message = await channel.send(
-            content=f"<@&{DEVELOPER_TASK_PING_ROLE_ID}>",
-            embed=create_task_embed(task_id),
-            view=DeveloperTaskView(task_id),
-            allowed_mentions=discord.AllowedMentions(
-                roles=True
-            )
-        )
-
-        data["tasks"][task_id][
-            "message_id"
-        ] = message.id
-
-        save_data()
-
-        await interaction.response.send_message(
-            f"✅ Aufgabe **{task_id}** wurde erstellt.",
-            ephemeral=True
-        )
-
-
-class DeveloperTaskPanelView(ui.View):
-
-    def __init__(self):
-
-        super().__init__(
-            timeout=None
-        )
-
-        button = ui.Button(
-            label="Aufgabe erstellen",
-            style=discord.ButtonStyle.primary,
-            emoji="🛠️",
-            custom_id="developer_task_create"
-        )
-
-        button.callback = self.create_task
-
-        self.add_item(button)
-
-    async def create_task(self, interaction):
-
-        await interaction.response.send_modal(
-            DeveloperTaskModal()
-        )
-
-
-class DeveloperTaskView(ui.View):
+class DeveloperTaskView(discord.ui.View):
 
     def __init__(self, task_id):
-
-        super().__init__(
-            timeout=None
-        )
-
+        super().__init__(timeout=None)
         self.task_id = str(task_id)
 
-        take = ui.Button(
-            label="Übernehmen",
-            style=discord.ButtonStyle.primary,
-            emoji="🙋",
-            custom_id=f"task_take_{self.task_id}"
-        )
+    @discord.ui.button(
+        label="Übernehmen",
+        style=discord.ButtonStyle.primary,
+        emoji="🙋",
+        custom_id="task_take"
+    )
+    async def take_task(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
-        done = ui.Button(
-            label="Erledigt",
-            style=discord.ButtonStyle.success,
-            emoji="✅",
-            custom_id=f"task_done_{self.task_id}"
-        )
-
-        delete = ui.Button(
-            label="Löschen",
-            style=discord.ButtonStyle.danger,
-            emoji="🗑️",
-            custom_id=f"task_delete_{self.task_id}"
-        )
-
-        take.callback = self.take_task
-        done.callback = self.done_task
-        delete.callback = self.delete_task
-
-        self.add_item(take)
-        self.add_item(done)
-        self.add_item(delete)
-
-    async def take_task(self, interaction):
-
-        task = data["tasks"].get(
-            self.task_id
-        )
+        task = data["tasks"].get(self.task_id)
 
         if not task:
-
             await interaction.response.send_message(
                 "❌ Aufgabe nicht gefunden.",
                 ephemeral=True
             )
             return
 
-        if task.get("done"):
-
-            await interaction.response.send_message(
-                "⚠️ Die Aufgabe ist bereits erledigt.",
-                ephemeral=True
-            )
-            return
-
-        if not can_use_role(
-            interaction.user,
-            SHIFT_PERMISSION_ROLE_ID
-        ):
-
+        if not has_shift_permission(interaction.user):
             await interaction.response.send_message(
                 "❌ Du hast keine Berechtigung.",
                 ephemeral=True
             )
             return
 
-        if task.get("taken_by"):
-
+        if task.get("status") == "done":
             await interaction.response.send_message(
-                "⚠️ Die Aufgabe wurde bereits übernommen.",
+                "❌ Diese Aufgabe ist bereits erledigt.",
+                ephemeral=True
+            )
+            return
+
+        if task.get("taken_by"):
+            await interaction.response.send_message(
+                "❌ Diese Aufgabe wurde bereits übernommen.",
                 ephemeral=True
             )
             return
 
         task["taken_by"] = interaction.user.id
+        task["status"] = "taken"
 
         save_data()
 
-        await interaction.response.edit_message(
-            embed=create_task_embed(
-                self.task_id
-            ),
-            view=DeveloperTaskView(
-                self.task_id
-            )
+        await interaction.message.edit(
+            embed=create_task_embed(task),
+            view=DeveloperTaskView(self.task_id)
         )
 
-    async def done_task(self, interaction):
-
-        task = data["tasks"].get(
-            self.task_id
+        await interaction.response.send_message(
+            "✅ Du hast die Aufgabe übernommen.",
+            ephemeral=True
         )
+
+    @discord.ui.button(
+        label="Erledigt",
+        style=discord.ButtonStyle.success,
+        emoji="✅",
+        custom_id="task_done"
+    )
+    async def done_task(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        task = data["tasks"].get(self.task_id)
 
         if not task:
-
             await interaction.response.send_message(
                 "❌ Aufgabe nicht gefunden.",
                 ephemeral=True
             )
             return
 
-        if task.get("done"):
+        is_admin = interaction.user.guild_permissions.administrator
 
+        if task.get("taken_by"):
+            allowed = (
+                task["taken_by"] == interaction.user.id
+                or is_admin
+            )
+        else:
+            allowed = is_admin
+
+        if not allowed:
             await interaction.response.send_message(
-                "⚠️ Aufgabe bereits erledigt.",
+                "❌ Nur der Übernehmer oder ein Administrator kann die Aufgabe erledigen.",
                 ephemeral=True
             )
             return
 
-        taken_by = task.get(
-            "taken_by"
-        )
-
-        if not taken_by and not is_admin(
-            interaction.user
-        ):
-
-            await interaction.response.send_message(
-                "❌ Die Aufgabe wurde noch nicht übernommen.",
-                ephemeral=True
-            )
-            return
-
-        if (
-            taken_by
-            and interaction.user.id != taken_by
-            and not is_admin(interaction.user)
-        ):
-
-            await interaction.response.send_message(
-                "❌ Nur der Bearbeiter oder ein Administrator "
-                "kann die Aufgabe erledigen.",
-                ephemeral=True
-            )
-            return
-
-        task["done"] = True
+        task["status"] = "done"
         task["done_by"] = interaction.user.id
 
         save_data()
 
         try:
-
-            creator = await bot.fetch_user(
-                int(task["creator"])
-            )
+            creator = await bot.fetch_user(int(task["creator_id"]))
 
             await creator.send(
-                f"✅ Deine Entwickleraufgabe "
-                f"**{self.task_id}** wurde erledigt."
+                f"✅ Deine Entwickleraufgabe **#{task['id']}** wurde erledigt."
             )
 
         except Exception:
             pass
 
-        await interaction.response.edit_message(
-            embed=create_task_embed(
-                self.task_id
-            ),
-            view=DeveloperTaskView(
-                self.task_id
-            )
+        await interaction.message.edit(
+            embed=create_task_embed(task),
+            view=DeveloperTaskView(self.task_id)
         )
 
-    async def delete_task(self, interaction):
+        await interaction.response.send_message(
+            "✅ Aufgabe wurde als erledigt markiert.",
+            ephemeral=True
+        )
 
-        if not is_admin(
-            interaction.user
-        ):
+    @discord.ui.button(
+        label="Löschen",
+        style=discord.ButtonStyle.danger,
+        emoji="🗑️",
+        custom_id="task_delete"
+    )
+    async def delete_task(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
+        if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
                 "❌ Nur Administratoren können Aufgaben löschen.",
                 ephemeral=True
             )
             return
 
-        await interaction.response.defer(
-            ephemeral=True
-        )
+        task = data["tasks"].get(self.task_id)
 
-        data["tasks"].pop(
-            self.task_id,
-            None
-        )
+        if not task:
+            await interaction.response.send_message(
+                "❌ Aufgabe nicht gefunden.",
+                ephemeral=True
+            )
+            return
 
+        await interaction.response.defer(ephemeral=True)
+
+        data["tasks"].pop(self.task_id, None)
         save_data()
 
         try:
@@ -1019,403 +739,371 @@ class DeveloperTaskView(ui.View):
         except Exception:
             pass
 
-        await interaction.followup.send(
-            "🗑️ Aufgabe wurde gelöscht.",
-            ephemeral=True
-        )
-
-
-# =========================================================
-# ENTWICKLER-SCHICHT
-# =========================================================
-
-def create_shift_embed():
-
-    active = data.get(
-        "active_shifts",
-        []
-    )
-
-    embed = make_embed(
-        "🕐 Entwickler-Schicht",
-        "Verwalte hier deine aktuelle Entwickler-Schicht.",
-        discord.Color.green()
-    )
-
-    if not active:
-
-        embed.add_field(
-            name="👥 Aktuell im Dienst",
-            value="Niemand ist aktuell im Dienst.",
-            inline=False
-        )
-
-    else:
-
-        members = []
-
-        for user_id in active:
-
-            members.append(
-                f"🟢 <@{user_id}>"
+        try:
+            await interaction.followup.send(
+                "✅ Aufgabe wurde gelöscht.",
+                ephemeral=True
             )
-
-        embed.add_field(
-            name="👥 Aktuell im Dienst",
-            value="\n".join(members),
-            inline=False
-        )
-
-    embed.set_footer(
-        text="RLP • Entwickler-Schicht"
-    )
-
-    return embed
+        except Exception:
+            pass
 
 
-class DeveloperShiftView(ui.View):
+# =========================================================
+# DEVELOPER SCHICHT
+# =========================================================
+
+class DeveloperShiftView(discord.ui.View):
 
     def __init__(self):
+        super().__init__(timeout=None)
 
-        super().__init__(
-            timeout=None
-        )
+    @discord.ui.button(
+        label="Schicht starten",
+        style=discord.ButtonStyle.success,
+        emoji="🟢",
+        custom_id="shift_start"
+    )
+    async def start_shift(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
-        start = ui.Button(
-            label="Schicht starten",
-            style=discord.ButtonStyle.success,
-            emoji="🟢",
-            custom_id="shift_start"
-        )
+        member = interaction.guild.get_member(interaction.user.id)
 
-        stop = ui.Button(
-            label="Schicht beenden",
-            style=discord.ButtonStyle.danger,
-            emoji="🔴",
-            custom_id="shift_stop"
-        )
-
-        start.callback = self.start_shift
-        stop.callback = self.stop_shift
-
-        self.add_item(start)
-        self.add_item(stop)
-
-    async def start_shift(self, interaction):
-
-        if not can_use_role(
-            interaction.user,
-            SHIFT_PERMISSION_ROLE_ID
-        ):
-
+        if member is None:
             await interaction.response.send_message(
-                "❌ Du hast keine Berechtigung.",
+                "❌ Mitglied nicht gefunden.",
                 ephemeral=True
             )
             return
 
-        if interaction.user.id in data["active_shifts"]:
-
+        if not has_shift_permission(member):
             await interaction.response.send_message(
-                "⚠️ Du bist bereits im Dienst.",
+                "❌ Du hast keine Berechtigung, eine Developer-Schicht zu starten.",
                 ephemeral=True
             )
             return
 
-        data["active_shifts"].append(
-            interaction.user.id
-        )
+        user_id = str(interaction.user.id)
 
-        save_data()
-
-        role = interaction.guild.get_role(
-            DEVELOPER_SHIFT_ROLE_ID
-        )
-
-        if role:
-
-            try:
-                await interaction.user.add_roles(
-                    role
-                )
-            except discord.Forbidden:
-                pass
-
-        await interaction.response.edit_message(
-            embed=create_shift_embed(),
-            view=DeveloperShiftView()
-        )
-
-        await send_log(
-            f"🟢 **Schicht gestartet:** "
-            f"{interaction.user.mention}"
-        )
-
-    async def stop_shift(self, interaction):
-
-        if interaction.user.id not in data["active_shifts"]:
-
+        if user_id in data["active_shifts"]:
             await interaction.response.send_message(
-                "⚠️ Du bist aktuell nicht im Dienst.",
+                "❌ Du hast bereits eine aktive Schicht.",
                 ephemeral=True
             )
             return
 
-        data["active_shifts"].remove(
-            interaction.user.id
-        )
+        started_at = datetime.now()
 
-        save_data()
-
-        role = interaction.guild.get_role(
-            DEVELOPER_SHIFT_ROLE_ID
-        )
-
-        if role:
-
-            try:
-                await interaction.user.remove_roles(
-                    role
-                )
-            except discord.Forbidden:
-                pass
-
-        await interaction.response.edit_message(
-            embed=create_shift_embed(),
-            view=DeveloperShiftView()
-        )
-
-        await send_log(
-            f"🔴 **Schicht beendet:** "
-            f"{interaction.user.mention}"
-        )
-
-
-# =========================================================
-# DEVELOPER-BEWERBUNG
-# =========================================================
-
-class DeveloperApplicationModal(
-    ui.Modal,
-    title="Developer-Bewerbung"
-):
-
-    name = ui.TextInput(
-        label="Name",
-        placeholder="Wie heißt du?",
-        max_length=50
-    )
-
-    age = ui.TextInput(
-        label="Alter",
-        placeholder="Wie alt bist du?",
-        max_length=3
-    )
-
-    experience = ui.TextInput(
-        label="Erfahrung",
-        placeholder="Welche Erfahrungen hast du?",
-        style=discord.TextStyle.paragraph,
-        max_length=1000
-    )
-
-    motivation = ui.TextInput(
-        label="Motivation",
-        placeholder="Warum möchtest du Developer werden?",
-        style=discord.TextStyle.paragraph,
-        max_length=1000
-    )
-
-    additional = ui.TextInput(
-        label="Zusätzliche Informationen",
-        placeholder="Optional",
-        style=discord.TextStyle.paragraph,
-        required=False,
-        max_length=1000
-    )
-
-    async def on_submit(self, interaction):
-
-        user_id = str(
-            interaction.user.id
-        )
-
-        existing = data["applications"].get(
-            user_id
-        )
-
-        if (
-            existing
-            and existing.get("status") == "open"
-        ):
-
-            await interaction.response.send_message(
-                "❌ Du hast bereits eine offene Bewerbung.",
-                ephemeral=True
-            )
-            return
-
-        data["applications"][user_id] = {
-            "user_id": interaction.user.id,
-            "name": self.name.value,
-            "age": self.age.value,
-            "experience": self.experience.value,
-            "motivation": self.motivation.value,
-            "additional": self.additional.value,
-            "status": "open",
-            "message_id": None
+        data["active_shifts"][user_id] = {
+            "started_at": started_at.isoformat(),
+            "username": interaction.user.name
         }
 
         save_data()
 
-        channel = await get_or_fetch_channel(
-            DEV_APPLICATION_RESULT_CHANNEL_ID
+        role = interaction.guild.get_role(DEVELOPER_SHIFT_ROLE_ID)
+
+        if role:
+            try:
+                await member.add_roles(role)
+            except Exception as e:
+                print(f"Fehler beim Hinzufügen der Schichtrolle: {e}")
+
+        # ============================
+        # SCHICHT-LOG START
+        # ============================
+
+        log_channel = await get_or_fetch_channel(
+            SHIFT_LOG_CHANNEL_ID
         )
 
-        if not channel:
+        if log_channel:
 
+            embed = discord.Embed(
+                title="🟢 Developer-Schicht gestartet",
+                description=(
+                    f"{interaction.user.mention} ♡ "
+                    f"hat seine Schicht gestartet."
+                ),
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+
+            embed.add_field(
+                name="Developer",
+                value=(
+                    f"{interaction.user.name}. "
+                    f"`{interaction.user.id}`"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
+                name="",
+                value=f"**heute um {now_time()}**",
+                inline=False
+            )
+
+            try:
+                embed.set_thumbnail(
+                    url=interaction.user.display_avatar.url
+                )
+            except Exception:
+                pass
+
+            try:
+                await log_channel.send(embed=embed)
+            except Exception as e:
+                print(f"Fehler beim Schicht-Start-Log: {e}")
+
+        await interaction.response.send_message(
+            "🟢 Deine Developer-Schicht wurde gestartet.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Schicht beenden",
+        style=discord.ButtonStyle.danger,
+        emoji="🔴",
+        custom_id="shift_stop"
+    )
+    async def stop_shift(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+
+        member = interaction.guild.get_member(interaction.user.id)
+
+        if member is None:
             await interaction.response.send_message(
-                "❌ Bewerbungs-Kanal nicht gefunden.",
+                "❌ Mitglied nicht gefunden.",
                 ephemeral=True
             )
             return
 
-        embed = make_embed(
-            "💻 Neue Developer-Bewerbung",
-            color=discord.Color.blurple()
-        )
+        user_id = str(interaction.user.id)
 
-        embed.add_field(
-            name="👤 Name",
-            value=self.name.value,
-            inline=False
-        )
-
-        embed.add_field(
-            name="🎂 Alter",
-            value=self.age.value,
-            inline=False
-        )
-
-        embed.add_field(
-            name="🛠️ Erfahrung",
-            value=self.experience.value,
-            inline=False
-        )
-
-        embed.add_field(
-            name="🎯 Motivation",
-            value=self.motivation.value,
-            inline=False
-        )
-
-        embed.add_field(
-            name="📝 Zusätzlich",
-            value=self.additional.value or "Keine Angabe",
-            inline=False
-        )
-
-        embed.add_field(
-            name="👤 Bewerber",
-            value=user_text(interaction.user),
-            inline=False
-        )
-
-        message = await channel.send(
-            embed=embed,
-            view=DeveloperApplicationDecisionView(
-                user_id
+        if user_id not in data["active_shifts"]:
+            await interaction.response.send_message(
+                "❌ Du hast keine aktive Schicht.",
+                ephemeral=True
             )
-        )
+            return
 
-        data["applications"][user_id][
-            "message_id"
-        ] = message.id
+        shift_data = data["active_shifts"].get(user_id)
 
+        data["active_shifts"].pop(user_id, None)
         save_data()
 
+        role = interaction.guild.get_role(DEVELOPER_SHIFT_ROLE_ID)
+
+        if role:
+            try:
+                await member.remove_roles(role)
+            except Exception as e:
+                print(f"Fehler beim Entfernen der Schichtrolle: {e}")
+
+        # ============================
+        # SCHICHT-LOG ENDE
+        # ============================
+
+        log_channel = await get_or_fetch_channel(
+            SHIFT_LOG_CHANNEL_ID
+        )
+
+        if log_channel:
+
+            embed = discord.Embed(
+                title="🔴 Developer-Schicht beendet",
+                description=(
+                    f"{interaction.user.mention} ♡ "
+                    f"hat seine Schicht beendet."
+                ),
+                color=discord.Color.red(),
+                timestamp=datetime.now()
+            )
+
+            embed.add_field(
+                name="Developer",
+                value=(
+                    f"{interaction.user.name}. "
+                    f"`{interaction.user.id}`"
+                ),
+                inline=False
+            )
+
+            embed.add_field(
+                name="",
+                value=f"**heute um {now_time()}**",
+                inline=False
+            )
+
+            try:
+                embed.set_thumbnail(
+                    url=interaction.user.display_avatar.url
+                )
+            except Exception:
+                pass
+
+            try:
+                await log_channel.send(embed=embed)
+            except Exception as e:
+                print(f"Fehler beim Schicht-Ende-Log: {e}")
+
         await interaction.response.send_message(
-            "✅ Deine Bewerbung wurde erfolgreich eingereicht.",
+            "🔴 Deine Developer-Schicht wurde beendet.",
             ephemeral=True
         )
 
 
-class DeveloperApplicationPanelView(ui.View):
+def create_shift_embed():
+
+    return discord.Embed(
+        title="💻 Developer-Schicht",
+        description=(
+            "Hier kannst du deine Developer-Schicht starten "
+            "oder beenden.\n\n"
+            "🟢 **Schicht starten**\n"
+            "🔴 **Schicht beenden**"
+        ),
+        color=discord.Color.blurple()
+    )
+
+
+# =========================================================
+# DEVELOPER BEWERBUNG
+# =========================================================
+
+class DeveloperApplicationModal(
+    discord.ui.Modal,
+    title="Developer Bewerbung"
+):
+
+    name_field = discord.ui.TextInput(
+        label="Name",
+        max_length=100,
+        required=True
+    )
+
+    age_field = discord.ui.TextInput(
+        label="Alter",
+        max_length=3,
+        required=True
+    )
+
+    experience_field = discord.ui.TextInput(
+        label="Erfahrung",
+        style=discord.TextStyle.paragraph,
+        max_length=1000,
+        required=True
+    )
+
+    motivation_field = discord.ui.TextInput(
+        label="Warum möchtest du Developer werden?",
+        style=discord.TextStyle.paragraph,
+        max_length=1500,
+        required=True
+    )
+
+    additional_field = discord.ui.TextInput(
+        label="Zusätzliche Informationen",
+        style=discord.TextStyle.paragraph,
+        max_length=1000,
+        required=False
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        user_id = str(interaction.user.id)
+
+        for application in data["applications"].values():
+            if (
+                str(application.get("user_id")) == user_id
+                and application.get("status") == "open"
+            ):
+                await interaction.response.send_message(
+                    "❌ Du hast bereits eine offene Bewerbung.",
+                    ephemeral=True
+                )
+                return
+
+        application_id = str(data["next_application_id"])
+        data["next_application_id"] += 1
+
+        application = {
+            "id": application_id,
+            "user_id": interaction.user.id,
+            "name": str(self.name_field),
+            "age": str(self.age_field),
+            "experience": str(self.experience_field),
+            "motivation": str(self.motivation_field),
+            "additional": str(self.additional_field),
+            "status": "open"
+        }
+
+        data["applications"][application_id] = application
+        save_data()
+
+        await send_application_message(application)
+
+        await interaction.response.send_message(
+            "✅ Deine Developer-Bewerbung wurde erfolgreich abgeschickt.",
+            ephemeral=True
+        )
+
+
+class DeveloperApplicationView(discord.ui.View):
 
     def __init__(self):
+        super().__init__(timeout=None)
 
-        super().__init__(
-            timeout=None
-        )
-
-        button = ui.Button(
-            label="Jetzt bewerben",
-            style=discord.ButtonStyle.primary,
-            emoji="💻",
-            custom_id="developer_application_open"
-        )
-
-        button.callback = self.open_application
-
-        self.add_item(button)
-
-    async def open_application(self, interaction):
-
+    @discord.ui.button(
+        label="Developer bewerben",
+        style=discord.ButtonStyle.success,
+        emoji="💻",
+        custom_id="developer_apply"
+    )
+    async def apply(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
         await interaction.response.send_modal(
             DeveloperApplicationModal()
         )
 
 
-class DeveloperApplicationDecisionView(ui.View):
+class ApplicationDecisionView(discord.ui.View):
 
-    def __init__(self, user_id):
+    def __init__(self, application_id):
+        super().__init__(timeout=None)
+        self.application_id = str(application_id)
 
-        super().__init__(
-            timeout=None
-        )
+    @discord.ui.button(
+        label="Annehmen",
+        style=discord.ButtonStyle.success,
+        emoji="✅",
+        custom_id="application_accept"
+    )
+    async def accept(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
-        self.user_id = str(
-            user_id
-        )
-
-        accept = ui.Button(
-            label="Annehmen",
-            style=discord.ButtonStyle.success,
-            emoji="✅",
-            custom_id=f"application_accept_{self.user_id}"
-        )
-
-        reject = ui.Button(
-            label="Ablehnen",
-            style=discord.ButtonStyle.danger,
-            emoji="❌",
-            custom_id=f"application_reject_{self.user_id}"
-        )
-
-        accept.callback = self.accept
-        reject.callback = self.reject
-
-        self.add_item(accept)
-        self.add_item(reject)
-
-    async def accept(self, interaction):
-
-        if not is_admin(
-            interaction.user
-        ):
-
+        if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
                 "❌ Nur Administratoren können Bewerbungen bearbeiten.",
                 ephemeral=True
             )
             return
 
-        application = data["applications"].get(
-            self.user_id
-        )
+        application = data["applications"].get(self.application_id)
 
         if not application:
-
             await interaction.response.send_message(
                 "❌ Bewerbung nicht gefunden.",
                 ephemeral=True
@@ -1423,68 +1111,75 @@ class DeveloperApplicationDecisionView(ui.View):
             return
 
         if application.get("status") != "open":
-
             await interaction.response.send_message(
-                "⚠️ Diese Bewerbung wurde bereits bearbeitet.",
+                "❌ Diese Bewerbung wurde bereits bearbeitet.",
                 ephemeral=True
             )
             return
 
         application["status"] = "accepted"
+        application["decided_by"] = interaction.user.id
 
         save_data()
 
-        member = interaction.guild.get_member(
-            int(self.user_id)
-        )
+        guild = interaction.guild
+        member = guild.get_member(int(application["user_id"]))
 
-        role = interaction.guild.get_role(
-            DEVELOPER_APPLICATION_ROLE_ID
-        )
+        if member:
 
-        if member and role:
+            role = guild.get_role(
+                DEVELOPER_APPLICATION_ROLE_ID
+            )
+
+            if role:
+                try:
+                    await member.add_roles(role)
+                except Exception as e:
+                    print(f"Fehler bei Developer-Rolle: {e}")
 
             try:
-                await member.add_roles(role)
-            except discord.Forbidden:
+                await member.send(
+                    "✅ Deine Developer-Bewerbung wurde angenommen!"
+                )
+            except Exception:
                 pass
 
-        try:
+        embed = interaction.message.embeds[0]
 
-            applicant = await bot.fetch_user(
-                int(self.user_id)
-            )
+        embed.color = discord.Color.green()
 
-            await applicant.send(
-                "🎉 Deine Developer-Bewerbung wurde angenommen!"
-            )
-
-        except Exception:
-            pass
-
-        await interaction.response.edit_message(
-            content="✅ Diese Bewerbung wurde angenommen.",
+        await interaction.message.edit(
+            embed=embed,
             view=None
         )
 
-    async def reject(self, interaction):
+        await interaction.response.send_message(
+            "✅ Bewerbung wurde angenommen.",
+            ephemeral=True
+        )
 
-        if not is_admin(
-            interaction.user
-        ):
+    @discord.ui.button(
+        label="Ablehnen",
+        style=discord.ButtonStyle.danger,
+        emoji="❌",
+        custom_id="application_reject"
+    )
+    async def reject(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
+        if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message(
                 "❌ Nur Administratoren können Bewerbungen bearbeiten.",
                 ephemeral=True
             )
             return
 
-        application = data["applications"].get(
-            self.user_id
-        )
+        application = data["applications"].get(self.application_id)
 
         if not application:
-
             await interaction.response.send_message(
                 "❌ Bewerbung nicht gefunden.",
                 ephemeral=True
@@ -1492,119 +1187,175 @@ class DeveloperApplicationDecisionView(ui.View):
             return
 
         if application.get("status") != "open":
-
             await interaction.response.send_message(
-                "⚠️ Diese Bewerbung wurde bereits bearbeitet.",
+                "❌ Diese Bewerbung wurde bereits bearbeitet.",
                 ephemeral=True
             )
             return
 
         application["status"] = "rejected"
+        application["decided_by"] = interaction.user.id
 
         save_data()
 
         try:
-
-            applicant = await bot.fetch_user(
-                int(self.user_id)
+            user = await bot.fetch_user(
+                int(application["user_id"])
             )
 
-            await applicant.send(
-                "❌ Deine Developer-Bewerbung wurde leider abgelehnt."
+            await user.send(
+                "❌ Deine Developer-Bewerbung wurde abgelehnt."
             )
 
         except Exception:
             pass
 
-        await interaction.response.edit_message(
-            content="❌ Diese Bewerbung wurde abgelehnt.",
+        embed = interaction.message.embeds[0]
+
+        embed.color = discord.Color.red()
+
+        await interaction.message.edit(
+            embed=embed,
             view=None
         )
+
+        await interaction.response.send_message(
+            "❌ Bewerbung wurde abgelehnt.",
+            ephemeral=True
+        )
+
+
+async def send_application_message(application):
+
+    channel = await get_or_fetch_channel(
+        DEV_APPLICATION_RESULT_CHANNEL_ID
+    )
+
+    if channel is None:
+        return
+
+    user = bot.get_user(int(application["user_id"]))
+
+    if user:
+        user_text = get_user_info(user)
+    else:
+        user_text = f"<@{application['user_id']}>"
+
+    embed = discord.Embed(
+        title="💻 Neue Developer-Bewerbung",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="👤 Benutzer",
+        value=user_text,
+        inline=False
+    )
+
+    embed.add_field(
+        name="Name",
+        value=application["name"],
+        inline=False
+    )
+
+    embed.add_field(
+        name="Alter",
+        value=application["age"],
+        inline=True
+    )
+
+    embed.add_field(
+        name="Erfahrung",
+        value=application["experience"],
+        inline=False
+    )
+
+    embed.add_field(
+        name="Motivation",
+        value=application["motivation"],
+        inline=False
+    )
+
+    embed.add_field(
+        name="Zusätzliche Informationen",
+        value=(
+            application["additional"]
+            if application["additional"]
+            else "Keine"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="Bewerbungs-ID",
+        value=f"`{application['id']}`",
+        inline=False
+    )
+
+    await channel.send(
+        embed=embed,
+        view=ApplicationDecisionView(application["id"])
+    )
+
+
+def create_application_panel_embed():
+
+    return discord.Embed(
+        title="💻 Developer-Bewerbung",
+        description=(
+            "Du möchtest unser Developer-Team unterstützen?\n\n"
+            "Klicke auf den Button und fülle die Bewerbung aus."
+        ),
+        color=discord.Color.blurple()
+    )
 
 
 # =========================================================
 # COMMUNITY
 # =========================================================
 
-class FeedbackModal(
-    ui.Modal,
-    title="Community-Feedback"
-):
-
-    text = ui.TextInput(
-        label="Dein Feedback",
-        style=discord.TextStyle.paragraph,
-        max_length=1500
-    )
-
-    async def on_submit(self, interaction):
-
-        channel = await get_or_fetch_channel(
-            FEEDBACK_CHANNEL_ID
-        )
-
-        if channel:
-
-            embed = make_embed(
-                "💬 Neues Community-Feedback",
-                self.text.value,
-                discord.Color.blue()
-            )
-
-            embed.add_field(
-                name="👤 Von",
-                value=user_text(
-                    interaction.user
-                ),
-                inline=False
-            )
-
-            await channel.send(
-                embed=embed
-            )
-
-        await interaction.response.send_message(
-            "✅ Dein Feedback wurde gesendet.",
-            ephemeral=True
-        )
-
-
 class SuggestionModal(
-    ui.Modal,
+    discord.ui.Modal,
     title="Community-Vorschlag"
 ):
 
-    text = ui.TextInput(
+    text = discord.ui.TextInput(
         label="Dein Vorschlag",
         style=discord.TextStyle.paragraph,
-        max_length=1500
+        max_length=2000,
+        required=True
     )
 
-    async def on_submit(self, interaction):
+    async def on_submit(self, interaction: discord.Interaction):
 
         channel = await get_or_fetch_channel(
             SUGGESTION_CHANNEL_ID
         )
 
-        if channel:
-
-            embed = make_embed(
-                "💡 Neuer Community-Vorschlag",
-                self.text.value,
-                discord.Color.green()
+        if channel is None:
+            await interaction.response.send_message(
+                "❌ Vorschlagskanal nicht gefunden.",
+                ephemeral=True
             )
+            return
 
-            embed.add_field(
-                name="👤 Von",
-                value=user_text(
-                    interaction.user
-                ),
-                inline=False
-            )
+        embed = discord.Embed(
+            title="💡 Neuer Community-Vorschlag",
+            description=str(self.text),
+            color=discord.Color.blurple()
+        )
 
-            await channel.send(
-                embed=embed
-            )
+        embed.add_field(
+            name="👤 Von",
+            value=(
+                f"{interaction.user.mention} ♡ "
+                f"Name: {interaction.user.name}. "
+                f"User-ID: `{interaction.user.id}`"
+            ),
+            inline=False
+        )
+
+        await channel.send(embed=embed)
 
         await interaction.response.send_message(
             "✅ Dein Vorschlag wurde gesendet.",
@@ -1612,174 +1363,157 @@ class SuggestionModal(
         )
 
 
-class CommunityPanelView(ui.View):
+class FeedbackModal(
+    discord.ui.Modal,
+    title="Community-Feedback"
+):
+
+    text = discord.ui.TextInput(
+        label="Dein Feedback",
+        style=discord.TextStyle.paragraph,
+        max_length=2000,
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        channel = await get_or_fetch_channel(
+            FEEDBACK_CHANNEL_ID
+        )
+
+        if channel is None:
+            await interaction.response.send_message(
+                "❌ Feedbackkanal nicht gefunden.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="💬 Neues Community-Feedback",
+            description=str(self.text),
+            color=discord.Color.blurple()
+        )
+
+        embed.add_field(
+            name="👤 Von",
+            value=(
+                f"{interaction.user.mention} ♡ "
+                f"Name: {interaction.user.name}. "
+                f"User-ID: `{interaction.user.id}`"
+            ),
+            inline=False
+        )
+
+        await channel.send(embed=embed)
+
+        await interaction.response.send_message(
+            "✅ Dein Feedback wurde gesendet.",
+            ephemeral=True
+        )
+
+
+class CommunityPanelView(discord.ui.View):
 
     def __init__(self):
+        super().__init__(timeout=None)
 
-        super().__init__(
-            timeout=None
-        )
-
-        feedback = ui.Button(
-            label="Feedback",
-            style=discord.ButtonStyle.primary,
-            emoji="💬",
-            custom_id="community_feedback"
-        )
-
-        suggestion = ui.Button(
-            label="Vorschlag",
-            style=discord.ButtonStyle.success,
-            emoji="💡",
-            custom_id="community_suggestion"
-        )
-
-        feedback.callback = self.feedback
-        suggestion.callback = self.suggestion
-
-        self.add_item(feedback)
-        self.add_item(suggestion)
-
-    async def feedback(self, interaction):
-
-        await interaction.response.send_modal(
-            FeedbackModal()
-        )
-
-    async def suggestion(self, interaction):
-
+    @discord.ui.button(
+        label="Vorschlag senden",
+        style=discord.ButtonStyle.primary,
+        emoji="💡",
+        custom_id="community_suggestion"
+    )
+    async def suggestion(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
         await interaction.response.send_modal(
             SuggestionModal()
         )
 
-
-# =========================================================
-# PANEL EMBEDS
-# =========================================================
-
-def nametag_panel():
-
-    return make_embed(
-        "🏷️ Nametag-System",
-        "Ändere hier dein persönliches RLP-Nametag.\n\n"
-        "Klicke auf **Nametag ändern**, um deinen Namen "
-        "zu aktualisieren.",
-        discord.Color.blurple()
+    @discord.ui.button(
+        label="Feedback senden",
+        style=discord.ButtonStyle.secondary,
+        emoji="💬",
+        custom_id="community_feedback"
     )
+    async def feedback(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await interaction.response.send_modal(
+            FeedbackModal()
+        )
 
 
-def developer_task_panel():
+def create_community_panel_embed():
 
-    return make_embed(
-        "🛠️ Entwickleraufgaben",
-        "Hier können neue Aufgaben für das Developer-Team "
-        "erstellt und bearbeitet werden.",
-        discord.Color.orange()
-    )
-
-
-def developer_shift_panel():
-
-    return create_shift_embed()
-
-
-def developer_application_panel():
-
-    return make_embed(
-        "💻 Developer-Bewerbung",
-        "Du möchtest Teil des Developer-Teams werden?\n\n"
-        "Klicke auf **Jetzt bewerben** und fülle die Bewerbung aus.",
-        discord.Color.blurple()
-    )
-
-
-def community_panel():
-
-    return make_embed(
-        "🌐 Community",
-        "Teile deine Ideen mit dem Team.\n\n"
-        "💡 **Vorschlag**\n"
-        "Sende uns eine Idee für den Server.\n\n"
-        "💬 **Feedback**\n"
-        "Teile uns deine Meinung mit.",
-        discord.Color.green()
+    return discord.Embed(
+        title="🌐 Community",
+        description=(
+            "Über dieses Panel kannst du der Community "
+            "Vorschläge und Feedback senden."
+        ),
+        color=discord.Color.blurple()
     )
 
 
 # =========================================================
-# PANEL VERWALTUNG
+# PANEL REFRESH
 # =========================================================
 
-async def remove_old_panel_messages(
-    channel,
+async def refresh_fixed_panel(
+    key,
+    channel_id,
+    embed,
+    view,
     title
 ):
 
-    try:
+    channel = await get_or_fetch_channel(channel_id)
 
-        async for message in channel.history(
-            limit=100
-        ):
-
-            if message.author.id != bot.user.id:
-                continue
-
-            if not message.embeds:
-                continue
-
-            if message.embeds[0].title == title:
-
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-
-    except Exception as e:
-
-        print(
-            f"Panel-Suche fehlgeschlagen: {e}"
-        )
-
-
-async def refresh_panel(
-    channel_id,
-    title,
-    embed,
-    view,
-    key
-):
-
-    channel = await get_or_fetch_channel(
-        channel_id
-    )
-
-    if not channel:
-        print(
-            f"Kanal {channel_id} nicht gefunden."
-        )
+    if channel is None:
+        print(f"Kanal nicht gefunden: {channel_id}")
         return
 
-    old_id = data["panel_messages"].get(
-        key
-    )
+    message_id = data["panel_messages"].get(key)
 
-    if old_id:
+    if message_id:
 
         try:
-
-            old_message = await channel.fetch_message(
-                int(old_id)
+            message = await channel.fetch_message(
+                int(message_id)
             )
 
-            await old_message.delete()
+            await message.edit(
+                embed=embed,
+                view=view
+            )
+
+            return
 
         except Exception:
             pass
 
-    await remove_old_panel_messages(
-        channel,
-        title
-    )
+    try:
+
+        async for old_message in channel.history(limit=50):
+
+            if (
+                old_message.author.id == bot.user.id
+                and old_message.embeds
+                and old_message.embeds[0].title == title
+            ):
+
+                try:
+                    await old_message.delete()
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
 
     try:
 
@@ -1788,70 +1522,67 @@ async def refresh_panel(
             view=view
         )
 
-        data["panel_messages"][
-            key
-        ] = message.id
+        data["panel_messages"][key] = message.id
 
         save_data()
 
     except discord.Forbidden:
-
         print(
-            f"Keine Berechtigung im Panel-Kanal {channel_id}."
+            f"Keine Rechte zum Senden im Kanal {channel_id}"
         )
 
     except Exception as e:
-
         print(
-            f"Panel konnte nicht erstellt werden: {e}"
+            f"Fehler beim Panel {key}: {e}"
         )
 
 
 async def refresh_all_panels():
 
-    await refresh_panel(
+    await refresh_fixed_panel(
+        "nametag",
         NAMETAG_CHANNEL_ID,
-        "🏷️ Nametag-System",
-        nametag_panel(),
+        create_nametag_embed(),
         NametagView(),
-        "nametag"
+        "🏷️ Nametag-System"
     )
 
-    await refresh_panel(
-        LICENSE_PLATE_CHANNEL_ID,
-        "🚘 Kennzeichen-System",
-        create_license_panel_embed(),
-        LicensePlateView(),
-        "license_plate"
-    )
+    await refresh_license_panel()
 
-    await refresh_panel(
+    await refresh_fixed_panel(
+        "developer_task",
         DEVELOPER_TASK_CHANNEL_ID,
-        "🛠️ Entwickleraufgaben",
-        developer_task_panel(),
-        DeveloperTaskPanelView(),
-        "developer_tasks"
+        discord.Embed(
+            title="🛠️ Entwickleraufgaben",
+            description=(
+                "Hier können Entwickleraufgaben erstellt "
+                "und übernommen werden."
+            ),
+            color=discord.Color.blurple()
+        ),
+        None,
+        "🛠️ Entwickleraufgaben"
     )
 
-    await refresh_panel(
+    await refresh_fixed_panel(
+        "developer_shift",
         DEVELOPER_SHIFT_CHANNEL_ID,
-        "🕐 Entwickler-Schicht",
-        developer_shift_panel(),
+        create_shift_embed(),
         DeveloperShiftView(),
-        "developer_shift"
+        "💻 Developer-Schicht"
     )
 
-    await refresh_panel(
+    await refresh_fixed_panel(
+        "developer_application",
         DEV_APPLICATION_CHANNEL_ID,
-        "💻 Developer-Bewerbung",
-        developer_application_panel(),
-        DeveloperApplicationPanelView(),
-        "developer_application"
+        create_application_panel_embed(),
+        DeveloperApplicationView(),
+        "💻 Developer-Bewerbung"
     )
 
 
 # =========================================================
-# COMMUNITY COMMANDS
+# COMMUNITY PANEL COMMAND
 # =========================================================
 
 @bot.command()
@@ -1860,7 +1591,7 @@ async def communitypanel(ctx):
     if not has_role(
         ctx.author,
         COMMUNITY_PANEL_PERMISSION_ROLE_ID
-    ):
+    ) and not ctx.author.guild_permissions.administrator:
 
         await ctx.send(
             "❌ Du hast keine Berechtigung für diesen Befehl.",
@@ -1869,46 +1600,95 @@ async def communitypanel(ctx):
         return
 
     await ctx.send(
-        embed=community_panel(),
+        embed=create_community_panel_embed(),
         view=CommunityPanelView()
     )
 
 
+# =========================================================
+# COMMUNITY INFO
+# =========================================================
+
 @bot.command()
 async def community(ctx):
 
-    await ctx.send(
-        embed=community_panel()
+    embed = discord.Embed(
+        title="🌐 Community",
+        description=(
+            "Willkommen in unserer Community.\n\n"
+            "Nutze das Community-Panel, um Vorschläge "
+            "oder Feedback einzureichen."
+        ),
+        color=discord.Color.blurple()
     )
 
+    await ctx.send(embed=embed)
+
+
+# =========================================================
+# ENTWICKLERAUFGABE ERSTELLEN
+# =========================================================
 
 @bot.command()
-async def helpme(ctx):
+async def task(ctx, *, description=None):
 
-    embed = make_embed(
-        "📖 Bot-Befehle",
-        "Hier findest du die verfügbaren Befehle."
+    if not has_shift_permission(ctx.author):
+        await ctx.send(
+            "❌ Du hast keine Berechtigung.",
+            delete_after=5
+        )
+        return
+
+    if not description:
+        await ctx.send(
+            f"❌ Benutzung: `{PREFIX}task <Aufgabe>`",
+            delete_after=5
+        )
+        return
+
+    task_id = str(data["next_task_id"])
+    data["next_task_id"] += 1
+
+    task_data = {
+        "id": task_id,
+        "description": description,
+        "creator_id": ctx.author.id,
+        "status": "open",
+        "taken_by": None,
+        "done_by": None
+    }
+
+    data["tasks"][task_id] = task_data
+
+    save_data()
+
+    channel = await get_or_fetch_channel(
+        DEVELOPER_TASK_CHANNEL_ID
     )
 
-    embed.add_field(
-        name="?community",
-        value="Community-Informationen anzeigen.",
-        inline=False
-    )
+    if channel is None:
+        await ctx.send(
+            "❌ Entwickler-Aufgabenkanal nicht gefunden.",
+            delete_after=5
+        )
+        return
 
-    embed.add_field(
-        name="?communitypanel",
-        value="Community-Panel erstellen.",
-        inline=False
+    role = f"<@&{DEVELOPER_TASK_PING_ROLE_ID}>"
+
+    await channel.send(
+        content=role,
+        embed=create_task_embed(task_data),
+        view=DeveloperTaskView(task_id)
     )
 
     await ctx.send(
-        embed=embed
+        "✅ Entwickleraufgabe wurde erstellt.",
+        delete_after=5
     )
 
 
 # =========================================================
-# READY
+# STARTUP
 # =========================================================
 
 startup_sync_done = False
@@ -1919,86 +1699,25 @@ async def on_ready():
 
     global startup_sync_done
 
-    print()
-    print("======================================")
-    print(f"🤖 Bot online: {bot.user}")
-    print(f"🆔 Bot-ID: {bot.user.id}")
-    print("======================================")
+    print(
+        f"Bot online: {bot.user} "
+        f"(ID: {bot.user.id})"
+    )
 
     if startup_sync_done:
         return
 
     startup_sync_done = True
 
-    await asyncio.sleep(2)
+    # Persistente Views
+    bot.add_view(NametagView())
+    bot.add_view(LicensePlateView())
+    bot.add_view(DeveloperShiftView())
+    bot.add_view(DeveloperApplicationView())
+    bot.add_view(CommunityPanelView())
 
-    # Feste Views
-    bot.add_view(
-        NametagView()
-    )
-
-    bot.add_view(
-        LicensePlateView()
-    )
-
-    bot.add_view(
-        DeveloperTaskPanelView()
-    )
-
-    bot.add_view(
-        DeveloperShiftView()
-    )
-
-    bot.add_view(
-        DeveloperApplicationPanelView()
-    )
-
-    bot.add_view(
-        CommunityPanelView()
-    )
-
-    # Aufgaben-Views wiederherstellen
-    for task_id in data["tasks"]:
-
-        try:
-
-            bot.add_view(
-                DeveloperTaskView(
-                    task_id
-                )
-            )
-
-        except Exception as e:
-
-            print(
-                f"Task-View Fehler {task_id}: {e}"
-            )
-
-    # Bewerbungs-Views wiederherstellen
-    for user_id, application in data[
-        "applications"
-    ].items():
-
-        if application.get("status") == "open":
-
-            try:
-
-                bot.add_view(
-                    DeveloperApplicationDecisionView(
-                        user_id
-                    )
-                )
-
-            except Exception as e:
-
-                print(
-                    f"Bewerbungs-View Fehler: {e}"
-                )
-
-    # Schichten synchronisieren
-    guild = bot.get_guild(
-        GUILD_ID
-    )
+    # Schichtrollen synchronisieren
+    guild = await get_guild()
 
     if guild:
 
@@ -2008,106 +1727,68 @@ async def on_ready():
 
         if role:
 
-            active = set(
-                data.get(
-                    "active_shifts",
-                    []
-                )
-            )
+            for user_id in list(
+                data["active_shifts"].keys()
+            ):
 
-            for member in guild.members:
-
-                should_have = (
-                    member.id in active
+                member = guild.get_member(
+                    int(user_id)
                 )
 
-                has = (
-                    role in member.roles
-                )
+                if member:
 
-                try:
+                    try:
+                        if role not in member.roles:
+                            await member.add_roles(role)
+                    except Exception:
+                        pass
 
-                    if should_have and not has:
+    save_data()
 
-                        await member.add_roles(
-                            role
-                        )
-
-                    elif not should_have and has:
-
-                        await member.remove_roles(
-                            role
-                        )
-
-                except discord.Forbidden:
-                    pass
-
-    # Panels aktualisieren
     await refresh_all_panels()
 
-    print("✅ Alle Systeme geladen.")
+    print("Alle Systeme geladen.")
 
 
 # =========================================================
-# FEHLER
+# FEHLERBEHANDLUNG
 # =========================================================
 
 @bot.event
-async def on_command_error(
-    ctx,
-    error
-):
+async def on_command_error(ctx, error):
 
-    if isinstance(
-        error,
-        commands.CommandNotFound
-    ):
+    if isinstance(error, commands.CommandNotFound):
         return
 
-    print(
-        f"Command-Fehler: {error}"
-    )
+    if isinstance(error, commands.MissingRequiredArgument):
+
+        await ctx.send(
+            "❌ Es fehlt ein Argument.",
+            delete_after=5
+        )
+        return
+
+    print(f"Command-Fehler: {error}")
 
 
 # =========================================================
-# START
+# BOT START
 # =========================================================
 
-async def main():
+if not TOKEN:
 
-    if not TOKEN:
+    print("FEHLER: DISCORD_TOKEN fehlt.")
 
-        print()
-        print("======================================")
-        print("❌ DISCORD_TOKEN fehlt.")
-        print("======================================")
-
-        return
+else:
 
     try:
 
-        await bot.start(
-            TOKEN
-        )
+        bot.run(TOKEN)
 
     except discord.LoginFailure:
 
-        print()
-        print("======================================")
-        print("❌ Discord-Token ist ungültig.")
-        print("======================================")
+        print("FEHLER: Discord-Token ist falsch.")
 
     except Exception as e:
 
-        print()
-        print("======================================")
-        print("❌ BOT-FEHLER:")
-        print(e)
-        print("======================================")
-
-
-if __name__ == "__main__":
-
-    asyncio.run(
-        main()
-    )
+        print(f"FEHLER beim Starten des Bots: {e}")
