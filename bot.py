@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # KONFIGURATION
 # =========================================================
 
-TOKEN = os.getenv("TEST")
+TOKEN = "DEIN_TOKEN"
 
 GUILD_ID = 1519481018221072454
 
