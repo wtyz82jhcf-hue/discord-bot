@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 # KONFIGURATION
 # =========================================================
 
-TOKEN = os.environ.get("DISCORD_TOKEN")
+TOKEN = "test"
 
 GUILD_ID = 1519481018221072454
 
