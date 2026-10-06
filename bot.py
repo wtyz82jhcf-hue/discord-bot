@@ -7,6 +7,8 @@ import os
 import tempfile
 import random
 import time
+import asyncio
+
 
 # =========================================================
 # EINSTELLUNGEN
@@ -43,6 +45,7 @@ COMMUNITY_PANEL_PERMISSION_ROLE_ID = 1544679876206796930
 
 GERMANY_TZ = ZoneInfo("Europe/Berlin")
 
+
 # =========================================================
 # BOT
 # =========================================================
@@ -56,6 +59,7 @@ bot = commands.Bot(
 )
 
 startup_sync_done = False
+
 
 # =========================================================
 # DATEN
@@ -80,6 +84,7 @@ DEFAULT_DATA = {
 
 
 def deep_merge(defaults, current):
+
     if not isinstance(current, dict):
         current = {}
 
@@ -88,31 +93,38 @@ def deep_merge(defaults, current):
     for key, default_value in defaults.items():
 
         if key not in current:
+
             if isinstance(default_value, dict):
                 result[key] = deep_merge(
                     default_value,
                     {}
                 )
+
             else:
                 result[key] = default_value
 
         else:
+
             current_value = current[key]
 
             if isinstance(default_value, dict):
 
                 if isinstance(current_value, dict):
+
                     result[key] = deep_merge(
                         default_value,
                         current_value
                     )
+
                 else:
+
                     result[key] = deep_merge(
                         default_value,
                         {}
                     )
 
             else:
+
                 result[key] = current_value
 
     for key, value in current.items():
@@ -126,6 +138,7 @@ def deep_merge(defaults, current):
 def load_data():
 
     if not os.path.exists(DATA_FILE):
+
         return deep_merge(
             DEFAULT_DATA,
             {}
@@ -159,6 +172,8 @@ def load_data():
 
 
 def save_data():
+
+    temp_path = None
 
     try:
 
@@ -195,6 +210,13 @@ def save_data():
         print(
             f"[DATA] Fehler beim Speichern: {e}"
         )
+
+        if temp_path:
+
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
 
 
 data = load_data()
@@ -276,7 +298,6 @@ def normalize_data():
     ):
         data["emoji_quiz"]["user_stats"] = {}
 
-    # Altes Nummernspiel entfernen
     data.pop(
         "number_game",
         None
@@ -292,11 +313,13 @@ def normalize_data():
 
 normalize_data()
 
+
 # =========================================================
 # HILFSFUNKTIONEN
 # =========================================================
 
 def now_local():
+
     return datetime.now(
         GERMANY_TZ
     )
@@ -393,13 +416,21 @@ async def get_or_fetch_channel(channel_id):
         return None
 
 
-async def safe_dm(user, message):
+async def safe_dm(user, message=None, embed=None):
 
     try:
 
-        await user.send(
-            message
-        )
+        if embed:
+
+            await user.send(
+                embed=embed
+            )
+
+        else:
+
+            await user.send(
+                message
+            )
 
         return True
 
@@ -455,11 +486,7 @@ def load_env_file():
                 key = key.strip()
                 value = value.strip()
 
-                value = value.strip(
-                    '"'
-                ).strip(
-                    "'"
-                )
+                value = value.strip('"').strip("'")
 
                 if key == "DISCORD_TOKEN":
                     return value
@@ -718,9 +745,6 @@ class LicensePlateModal(
             ephemeral=True
         )
 
-        # WICHTIG:
-        # NICHT löschen.
-        # Vorhandene Nachricht wird bearbeitet.
         await update_license_panel()
 
 
@@ -841,9 +865,11 @@ async def build_license_embed():
         member = None
 
         try:
+
             member = channel.guild.get_member(
                 int(user_id)
             )
+
         except Exception:
             pass
 
@@ -858,9 +884,14 @@ async def build_license_embed():
         )
 
     if not lines:
+
         text = "Noch keine Kennzeichen eingetragen."
+
     else:
-        text = "\n".join(lines)
+
+        text = "\n".join(
+            lines
+        )
 
     return discord.Embed(
         title="🚗 Kennzeichen-System",
@@ -911,8 +942,6 @@ async def update_license_panel():
         except Exception:
             pass
 
-    # Nur wenn die gespeicherte Nachricht nicht mehr existiert:
-    # neue Nachricht senden.
     message = await channel.send(
         embed=embed,
         view=LicensePlateView()
@@ -985,7 +1014,6 @@ class DeveloperTaskView(
         self.add_item(done)
         self.add_item(delete)
 
-
     async def take_task(
         self,
         interaction
@@ -1048,7 +1076,6 @@ class DeveloperTaskView(
 
         await refresh_task_panel()
 
-
     async def done_task(
         self,
         interaction
@@ -1107,6 +1134,10 @@ class DeveloperTaskView(
 
         save_data()
 
+        # =================================================
+        # DM AN ERSTELLER
+        # =================================================
+
         creator_id = task.get(
             "creator_id"
         )
@@ -1119,17 +1150,66 @@ class DeveloperTaskView(
                     int(creator_id)
                 )
 
-                await safe_dm(
-                    creator,
-                    (
-                        f"✅ Deine Entwickleraufgabe "
-                        f"**#{self.task_id}** wurde von "
-                        f"{interaction.user.mention} erledigt."
-                    )
+                completed_by = interaction.user
+
+                dm_embed = discord.Embed(
+                    title="✅ Deine Aufgabe wurde erledigt",
+                    description=(
+                        "Eine von dir erstellte Entwickleraufgabe "
+                        "wurde erfolgreich abgeschlossen."
+                    ),
+                    color=discord.Color.green()
                 )
 
-            except Exception:
-                pass
+                dm_embed.add_field(
+                    name="📋 Aufgabe",
+                    value=task.get(
+                        "text",
+                        "Keine Beschreibung"
+                    ),
+                    inline=False
+                )
+
+                dm_embed.add_field(
+                    name="👤 Erledigt von",
+                    value=(
+                        f"{completed_by.mention} ♡ "
+                        f"Name: {completed_by.name}. "
+                        f"ID: `{completed_by.id}`"
+                    ),
+                    inline=False
+                )
+
+                dm_embed.add_field(
+                    name="📊 Status",
+                    value="🟢 Erledigt",
+                    inline=True
+                )
+
+                dm_embed.add_field(
+                    name="🆔 Aufgaben-ID",
+                    value=f"`{self.task_id}`",
+                    inline=True
+                )
+
+                dm_embed.set_thumbnail(
+                    url=completed_by.display_avatar.url
+                )
+
+                dm_embed.set_footer(
+                    text="RLP Community Bot • Entwicklerverwaltung"
+                )
+
+                await creator.send(
+                    embed=dm_embed
+                )
+
+            except Exception as e:
+
+                console_log(
+                    f"Erledigt-DM für Aufgabe #{self.task_id} "
+                    f"fehlgeschlagen: {e}"
+                )
 
         await interaction.response.send_message(
             "✅ Aufgabe erledigt.",
@@ -1141,7 +1221,6 @@ class DeveloperTaskView(
         )
 
         await refresh_task_panel()
-
 
     async def delete_task(
         self,
@@ -1189,21 +1268,33 @@ async def refresh_task_panel():
     )
 
     if not channel:
+
+        console_log(
+            f"❌ Developer-Aufgaben-Kanal "
+            f"{DEVELOPER_TASK_CHANNEL_ID} nicht gefunden."
+        )
+
         return
 
     title = "🛠️ Entwickleraufgabe"
 
-    # Altes Aufgaben-Panel entfernen.
+    # Alte Aufgaben-Panels löschen
     await delete_old_panel_messages(
         channel,
         title
     )
 
+    # =====================================================
+    # KEINE AUFGABEN
+    # =====================================================
+
     if not data["tasks"]:
 
         embed = discord.Embed(
-            title=title,
-            description="Aktuell gibt es keine Entwickleraufgaben.",
+            title="🛠️ Entwickleraufgabe",
+            description=(
+                "Aktuell gibt es keine Entwickleraufgaben."
+            ),
             color=discord.Color.blurple()
         )
 
@@ -1216,7 +1307,15 @@ async def refresh_task_panel():
             message
         )
 
+        console_log(
+            "Developer-Aufgaben-Panel ohne Aufgaben gesendet."
+        )
+
         return
+
+    # =====================================================
+    # AUFGABEN AUSGEBEN
+    # =====================================================
 
     for task_id, task in data[
         "tasks"
@@ -1234,15 +1333,21 @@ async def refresh_task_panel():
             "completed_by"
         )
 
+        if task.get("completed"):
+
+            embed_color = discord.Color.green()
+
+        elif task.get("taken_by"):
+
+            embed_color = discord.Color.orange()
+
+        else:
+
+            embed_color = discord.Color.blurple()
+
         embed = discord.Embed(
-            title=title,
-            color=(
-                discord.Color.green()
-                if task.get("completed")
-                else discord.Color.orange()
-                if task.get("taken_by")
-                else discord.Color.blurple()
-            )
+            title="🛠️ Entwickleraufgabe",
+            color=embed_color
         )
 
         embed.add_field(
@@ -1254,13 +1359,34 @@ async def refresh_task_panel():
             inline=False
         )
 
+        # =================================================
+        # ERSTELLER
+        # =================================================
+
+        if creator_id:
+
+            creator_name = task.get(
+                "creator_name",
+                "Unbekannt"
+            )
+
+            creator_value = (
+                f"<@{creator_id}> ♡ "
+                f"Name: {creator_name}. "
+                f"ID: `{creator_id}`"
+            )
+
+        else:
+
+            creator_value = (
+                "<@None> ♡ "
+                "Name: Unbekannt. "
+                "ID: `None`"
+            )
+
         embed.add_field(
             name="👤 Erstellt von",
-            value=(
-                f"<@{creator_id}> ♡ "
-                f"Name: {task.get('creator_name', 'Unbekannt')}. "
-                f"ID: `{creator_id}`"
-            ),
+            value=creator_value,
             inline=False
         )
 
@@ -1291,7 +1417,7 @@ async def refresh_task_panel():
         )
 
         embed.add_field(
-            name="Aufgaben-ID",
+            name="🆔 Aufgaben-ID",
             value=f"`{task_id}`",
             inline=False
         )
@@ -1301,13 +1427,23 @@ async def refresh_task_panel():
             embed=embed,
             view=DeveloperTaskView(
                 task_id
+            ),
+            allowed_mentions=discord.AllowedMentions(
+                roles=True
             )
         )
 
-    console_log(
-        f"Dev-Aufgaben automatisch aktualisiert: "
-        f"{len(data['tasks'])} Aufgabe(n)"
+        console_log(
+            f"Developer-Aufgabe #{task_id} "
+            f"im Aufgabenkanal gesendet."
+        )
+
+    data["panel_messages"].pop(
+        "developer_tasks",
+        None
     )
+
+    save_data()
 
 
 @bot.command(
@@ -1326,6 +1462,16 @@ async def create_task(
 
         await ctx.send(
             "❌ Keine Berechtigung."
+        )
+
+        return
+
+    task_text = task_text.strip()
+
+    if not task_text:
+
+        await ctx.send(
+            "❌ Bitte gib eine Aufgabe an."
         )
 
         return
@@ -1349,10 +1495,15 @@ async def create_task(
     save_data()
 
     await ctx.send(
-        f"✅ Entwickleraufgabe **#{task_id}** erstellt."
+        f"🛠️ Entwickleraufgabe **#{task_id}** wurde erstellt."
     )
 
     await refresh_task_panel()
+
+    console_log(
+        f"Neue Entwickleraufgabe #{task_id} "
+        f"von {ctx.author} erstellt: {task_text}"
+    )
 
 
 # =========================================================
@@ -1424,9 +1575,11 @@ class DeveloperShiftView(
         if role:
 
             try:
+
                 await interaction.user.add_roles(
                     role
                 )
+
             except Exception:
                 pass
 
@@ -1442,7 +1595,6 @@ class DeveloperShiftView(
         )
 
         await refresh_shift_panel()
-
 
     @discord.ui.button(
         label="Schicht beenden",
@@ -1489,9 +1641,11 @@ class DeveloperShiftView(
         if role:
 
             try:
+
                 await interaction.user.remove_roles(
                     role
                 )
+
             except Exception:
                 pass
 
@@ -1525,7 +1679,7 @@ async def send_shift_log(
     if started:
 
         content = (
-            "[**🟢**](https://discord.com/assets/2d6d478121939bde.svg) "
+            "**🟢** "
             "**Developer-Schicht gestartet**"
         )
 
@@ -1539,7 +1693,7 @@ async def send_shift_log(
     else:
 
         content = (
-            "[**🔴**](https://discord.com/assets/2d6d478121939bde.svg) "
+            "**🔴** "
             "**Developer-Schicht beendet**"
         )
 
@@ -1677,11 +1831,13 @@ async def sync_shift_roles():
         try:
 
             if should_have and not has:
+
                 await member.add_roles(
                     role
                 )
 
             elif not should_have and has:
+
                 await member.remove_roles(
                     role
                 )
@@ -1827,7 +1983,7 @@ class DeveloperApplicationModal(
             )
 
             embed.add_field(
-                name="Bewerbungs-ID",
+                name="🆔 Bewerbungs-ID",
                 value=f"`{application_id}`",
                 inline=False
             )
@@ -1888,7 +2044,6 @@ class ApplicationDecisionView(
         self.add_item(accept)
         self.add_item(reject)
 
-
     async def accept(
         self,
         interaction
@@ -1947,15 +2102,43 @@ class ApplicationDecisionView(
             if role:
 
                 try:
+
                     await member.add_roles(
                         role
                     )
-                except Exception:
-                    pass
+
+                except Exception as e:
+
+                    console_log(
+                        f"Developer-Rolle konnte nicht vergeben werden: {e}"
+                    )
+
+            # =============================================
+            # ANNAHME DM
+            # =============================================
+
+            dm_embed = discord.Embed(
+                title="✅ DEVELOPER-BEWERBUNG",
+                description=(
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "Herzlichen Glückwunsch! 🎉\n\n"
+                    "Deine Developer-Bewerbung wurde "
+                    "**angenommen**.\n\n"
+                    "Dir wurde die Developer-In-"
+                    "Bewerbung zugewiesen.\n\n"
+                    "Willkommen im Team! 👨‍💻\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━"
+                ),
+                color=discord.Color.green()
+            )
+
+            dm_embed.set_footer(
+                text="RLP Community Bot • Entwickler-Team"
+            )
 
             await safe_dm(
                 member,
-                "🎉 Deine Developer-Bewerbung wurde angenommen!"
+                embed=dm_embed
             )
 
         await interaction.response.send_message(
@@ -1963,6 +2146,10 @@ class ApplicationDecisionView(
             ephemeral=True
         )
 
+        console_log(
+            f"Developer-Bewerbung #{self.application_id} "
+            f"angenommen von {interaction.user}"
+        )
 
     async def reject(
         self,
@@ -2015,17 +2202,57 @@ class ApplicationDecisionView(
                 int(application["user_id"])
             )
 
-            await safe_dm(
-                user,
-                "❌ Deine Developer-Bewerbung wurde leider abgelehnt."
+            # =============================================
+            # ABLEHNUNG DM
+            # =============================================
+
+            dm_embed = discord.Embed(
+                title="📩 Update zu deiner Entwickler-Bewerbung",
+                description=(
+                    "Vielen Dank für dein Interesse an unserem "
+                    "Entwickler-Team.\n\n"
+                    "Deine Bewerbung wurde geprüft und dieses "
+                    "Mal leider **abgelehnt**.\n\n"
+                    "Wir wünschen dir weiterhin viel Erfolg!"
+                ),
+                color=discord.Color.red()
             )
 
-        except Exception:
-            pass
+            dm_embed.add_field(
+                name="📊 Entscheidung",
+                value="❌ Abgelehnt",
+                inline=False
+            )
+
+            dm_embed.add_field(
+                name="🆔 Bewerbungs-ID",
+                value=f"`{self.application_id}`",
+                inline=False
+            )
+
+            dm_embed.set_footer(
+                text="RLP Community Bot • Entwickler-Team"
+            )
+
+            await safe_dm(
+                user,
+                embed=dm_embed
+            )
+
+        except Exception as e:
+
+            console_log(
+                f"Ablehnungs-DM fehlgeschlagen: {e}"
+            )
 
         await interaction.response.send_message(
             "❌ Bewerbung abgelehnt.",
             ephemeral=True
+        )
+
+        console_log(
+            f"Developer-Bewerbung #{self.application_id} "
+            f"abgelehnt von {interaction.user}"
         )
 
 
@@ -2296,10 +2523,6 @@ async def community(
 # EMOJI QUIZ
 # =========================================================
 
-# Sehr großer Fragenpool.
-# Jede Frage besteht aus:
-# (Emoji, Antwort, Tipp, Anfangsbuchstaben, Kategorie)
-
 EMOJI_QUIZ = [
 
     ("⚽🥅", "Fußball", "Dort wird ein Ball ins Tor geschossen.", "F", "Sport"),
@@ -2449,6 +2672,7 @@ quiz_cooldowns = {}
 quiz_skip_cooldowns = {}
 quiz_hint_cooldowns = {}
 quiz_initial_cooldowns = {}
+quiz_answer_cooldowns = {}
 
 QUIZ_MESSAGE_ID = None
 
@@ -2465,6 +2689,7 @@ def normalize_answer(text):
     }
 
     for a, b in replacements.items():
+
         text = text.replace(
             a,
             b
@@ -2516,6 +2741,7 @@ def create_new_quiz():
     )
 
     if old_index in available:
+
         available.remove(
             old_index
         )
@@ -2543,8 +2769,6 @@ def create_new_quiz():
 
         "created_at": now_local().isoformat(),
 
-        # Die Limits gelten für jeden Nutzer
-        # pro aktuellem Quiz.
         "users": {}
     }
 
@@ -2634,7 +2858,10 @@ async def send_new_quiz_panel():
     if not channel:
         return
 
-    # Alle alten Quiz-Panels des Bots löschen.
+    # =====================================================
+    # ALTES QUIZ-PANEL LÖSCHEN
+    # =====================================================
+
     try:
 
         async for message in channel.history(
@@ -2650,7 +2877,9 @@ async def send_new_quiz_panel():
             if message.embeds[0].title == "🎯 Emoji Quiz":
 
                 try:
+
                     await message.delete()
+
                 except Exception:
                     pass
 
@@ -2659,6 +2888,10 @@ async def send_new_quiz_panel():
         console_log(
             f"Emoji-Quiz alte Panels konnten nicht gelöscht werden: {e}"
         )
+
+    # =====================================================
+    # NEUES QUIZ
+    # =====================================================
 
     current = create_new_quiz()
 
@@ -2696,7 +2929,8 @@ async def send_new_quiz_panel():
     save_data()
 
     console_log(
-        f"Neues Emoji-Quiz gestartet: {current['emoji']} "
+        f"Neues Emoji-Quiz gestartet: "
+        f"{current['emoji']} "
         f"({current['category']})"
     )
 
@@ -2774,7 +3008,6 @@ class EmojiQuizView(
             ephemeral=True
         )
 
-
     @discord.ui.button(
         label="Anfangsbuchstaben",
         style=discord.ButtonStyle.secondary,
@@ -2849,7 +3082,6 @@ class EmojiQuizView(
             ephemeral=True
         )
 
-
     @discord.ui.button(
         label="Überspringen",
         style=discord.ButtonStyle.danger,
@@ -2908,7 +3140,6 @@ class EmojiQuizView(
         )
 
         await send_new_quiz_panel()
-
 
     @discord.ui.button(
         label="Leaderboard",
@@ -2976,9 +3207,6 @@ class EmojiQuizView(
 # EMOJI QUIZ ANTWORTEN
 # =========================================================
 
-quiz_answer_cooldowns = {}
-
-
 @bot.event
 async def on_message(
     message
@@ -2987,13 +3215,12 @@ async def on_message(
     if message.author.bot:
         return
 
-    # Antworten nur im Emoji-Quiz-Kanal.
-    if (
-        message.channel.id
-        == EMOJI_QUIZ_CHANNEL_ID
-    ):
+    # =====================================================
+    # EMOJI QUIZ KANAL
+    # =====================================================
 
-        # Nur normale Textantworten.
+    if message.channel.id == EMOJI_QUIZ_CHANNEL_ID:
+
         answer_text = message.content.strip()
 
         if answer_text:
@@ -3007,8 +3234,7 @@ async def on_message(
                 0
             )
 
-            # Anti-Spam:
-            # maximal eine Antwort alle 2 Sekunden.
+            # Anti-Spam
             if now - last < 2:
 
                 try:
@@ -3035,12 +3261,9 @@ async def on_message(
                 answer_text
             )
 
-            # Antwortnachricht entfernen,
-            # damit der Quiz-Kanal nicht zugespammt wird.
-            try:
-                await message.delete()
-            except Exception:
-                pass
+            # =================================================
+            # RICHTIGE ANTWORT
+            # =================================================
 
             if given == correct:
 
@@ -3053,16 +3276,37 @@ async def on_message(
                     user_id
                 )
 
-                await message.channel.send(
+                # User-Nachricht löschen
+                try:
+
+                    await message.delete()
+
+                except Exception:
+                    pass
+
+                success_message = await message.channel.send(
                     (
                         f"🎉 {message.author.mention} "
-                        f"hat **richtig** geraten!\n"
-                        f"✅ Lösung: **{current.get('answer')}**\n"
-                        f"🏆 +10 Punkte\n"
-                        f"📊 Gesamt: **{points} Punkte**"
+                        f"hat **richtig** geraten!\n\n"
+                        f"✅ **Lösung:** {current.get('answer')}\n"
+                        f"🏆 **+10 Punkte**\n"
+                        f"📊 **Gesamt:** {points} Punkte"
                     ),
                     delete_after=5
                 )
+
+                # Bot reagiert auf seine eigene Nachricht
+                try:
+
+                    await success_message.add_reaction(
+                        "✅"
+                    )
+
+                except Exception as e:
+
+                    console_log(
+                        f"Emoji-Quiz Reaction Fehler: {e}"
+                    )
 
                 console_log(
                     f"Emoji Quiz richtig: "
@@ -3070,9 +3314,55 @@ async def on_message(
                     f"{current.get('answer')}"
                 )
 
+                # Neues Quiz
                 await send_new_quiz_panel()
 
                 return
+
+            # =================================================
+            # FALSCHE ANTWORT
+            # =================================================
+
+            wrong_message = await message.channel.send(
+                (
+                    f"❌ {message.author.mention} "
+                    f"**leider falsch!**\n\n"
+                    f"Deine Antwort **{answer_text}** "
+                    f"war leider nicht richtig.\n"
+                    f"💡 Versuch es gerne noch einmal!"
+                )
+            )
+
+            console_log(
+                f"Emoji Quiz falsch: "
+                f"{message.author} -> "
+                f"{answer_text}"
+            )
+
+            # Beide Nachrichten nach 4 Sekunden löschen
+            await asyncio.sleep(
+                4
+            )
+
+            try:
+
+                await message.delete()
+
+            except Exception:
+                pass
+
+            try:
+
+                await wrong_message.delete()
+
+            except Exception:
+                pass
+
+            return
+
+    # =====================================================
+    # ALLE ANDEREN COMMANDS
+    # =====================================================
 
     await bot.process_commands(
         message
@@ -3106,8 +3396,6 @@ async def ensure_quiz_panel():
                 int(panel_id)
             )
 
-            # Existiert bereits:
-            # Beim Neustart soll es trotzdem neu gemacht werden.
             await message.delete()
 
         except Exception:
@@ -3163,7 +3451,7 @@ async def on_ready():
         EmojiQuizView()
     )
 
-    # Alte Aufgaben-Buttons wieder aktivieren.
+    # Alte Aufgaben-Buttons wieder aktivieren
     for task_id in data[
         "tasks"
     ].keys():
@@ -3182,7 +3470,7 @@ async def on_ready():
                 f"Task-View Fehler {task_id}: {e}"
             )
 
-    # Alte Bewerbungs-Buttons wieder aktivieren.
+    # Alte Bewerbungs-Buttons wieder aktivieren
     for application_id, application in data[
         "applications"
     ].items():
@@ -3190,6 +3478,7 @@ async def on_ready():
         if application.get(
             "status"
         ) != "open":
+
             continue
 
         try:
@@ -3216,56 +3505,62 @@ async def on_ready():
     # PANELS
     # =====================================================
 
-    # Nametag: ALT LÖSCHEN -> NEU SENDEN
     try:
+
         await refresh_nametag_panel()
+
     except Exception as e:
+
         console_log(
             f"Nametag-Panel Fehler: {e}"
         )
 
-    # Kennzeichen:
-    # NICHT ALLES LÖSCHEN.
-    # Bestehendes Panel wird bearbeitet.
     try:
+
         await update_license_panel()
+
     except Exception as e:
+
         console_log(
             f"Kennzeichen-Panel Fehler: {e}"
         )
 
-    # Dev-Aufgaben:
-    # ALT LÖSCHEN -> NEU SENDEN
     try:
+
         await refresh_task_panel()
+
     except Exception as e:
+
         console_log(
             f"Aufgaben-Panel Fehler: {e}"
         )
 
-    # Developer-Schicht:
-    # ALT LÖSCHEN -> NEU SENDEN
     try:
+
         await refresh_shift_panel()
+
     except Exception as e:
+
         console_log(
             f"Schicht-Panel Fehler: {e}"
         )
 
-    # Developer-Bewerbung:
-    # ALT LÖSCHEN -> NEU SENDEN
     try:
+
         await refresh_application_panel()
+
     except Exception as e:
+
         console_log(
             f"Bewerbungs-Panel Fehler: {e}"
         )
 
-    # Emoji-Quiz:
-    # ALT LÖSCHEN -> NEUES QUIZ SENDEN
     try:
+
         await ensure_quiz_panel()
+
     except Exception as e:
+
         console_log(
             f"Emoji-Quiz Panel Fehler: {e}"
         )
