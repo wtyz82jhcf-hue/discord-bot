@@ -17,11 +17,15 @@ PREFIX = "?"
 DATA_FILE = "bot_data.json"
 
 # =========================================================
-# NUR DIESER SERVER DARF DEN BOT BENUTZEN
+# SICHERHEIT
 # =========================================================
 
 ALLOWED_GUILD_ID = 1519481018221072454
 GUILD_ID = ALLOWED_GUILD_ID
+
+# =========================================================
+# CHANNELS
+# =========================================================
 
 NAMETAG_CHANNEL_ID = 1555684071911202836
 LICENSE_PLATE_CHANNEL_ID = 1527350468832006276
@@ -38,6 +42,10 @@ FEEDBACK_CHANNEL_ID = 1556072540307333200
 
 EMOJI_QUIZ_CHANNEL_ID = 1533409789256925185
 
+# =========================================================
+# ROLES
+# =========================================================
+
 NAMETAG_ROLE_ID = 1520102928398942348
 SHIFT_PERMISSION_ROLE_ID = 1523674698574200904
 DEVELOPER_SHIFT_ROLE_ID = 1527372148979798086
@@ -48,6 +56,10 @@ DEVELOPER_TASK_PING_ROLE_ID = 1523674698574200904
 COMMUNITY_PANEL_PERMISSION_ROLE_ID = 1544679876206796930
 
 EMOJI_QUIZ_RESET_ROLE_ID = 1520102918219628756
+
+# =========================================================
+# ZEIT
+# =========================================================
 
 GERMANY_TZ = ZoneInfo("Europe/Berlin")
 
@@ -60,7 +72,8 @@ TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise RuntimeError(
         "TOKEN wurde nicht gefunden. "
-        "Bitte die Umgebungsvariable TOKEN in Wispbyte setzen."
+        "Setze in Wispbyte Environment: "
+        "Key = TOKEN, Value = dein Discord-Bot-Token."
     )
 
 # =========================================================
@@ -89,19 +102,12 @@ def is_allowed_guild(guild):
 
 
 async def allowed_guild_only(interaction):
-    """
-    Prüft, ob eine Button-/Modal-Interaktion
-    auf dem erlaubten Server stattfindet.
-    """
-
     if not is_allowed_guild(interaction.guild):
-
         if not interaction.response.is_done():
             await interaction.response.send_message(
                 "❌ Dieser Bot funktioniert nur auf dem vorgesehenen Server.",
                 ephemeral=True
             )
-
         return False
 
     return True
@@ -109,11 +115,6 @@ async def allowed_guild_only(interaction):
 
 @bot.check
 async def global_guild_check(ctx):
-    """
-    ALLE Prefix-Commands funktionieren ausschließlich
-    auf dem erlaubten Server.
-    """
-
     return (
         ctx.guild is not None
         and ctx.guild.id == ALLOWED_GUILD_ID
@@ -123,15 +124,25 @@ async def global_guild_check(ctx):
 @bot.event
 async def on_command_error(ctx, error):
 
-    # Auf anderen Servern keine Fehlermeldung anzeigen.
     if isinstance(error, commands.CheckFailure):
         return
 
-    # Unbekannte Commands ebenfalls nicht crashen lassen.
     if isinstance(error, commands.CommandNotFound):
         return
 
-    print(
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send(
+            "❌ Du hast dafür keine Berechtigung."
+        )
+        return
+
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(
+            "❌ Es fehlen benötigte Angaben."
+        )
+        return
+
+    console_log(
         f"Command-Fehler bei {ctx.command}: {error}"
     )
 
@@ -157,25 +168,32 @@ DEFAULT_DATA = {
 }
 
 
+def deep_copy_default():
+    return json.loads(
+        json.dumps(DEFAULT_DATA)
+    )
+
+
 def load_data():
 
     if not os.path.exists(DATA_FILE):
-        return json.loads(
-            json.dumps(DEFAULT_DATA)
-        )
+        return deep_copy_default()
 
     try:
-
         with open(
             DATA_FILE,
             "r",
             encoding="utf-8"
         ) as f:
-
             loaded = json.load(f)
 
-    except Exception:
+    except Exception as e:
+        console_log(
+            f"Data-Datei konnte nicht gelesen werden: {e}"
+        )
+        loaded = {}
 
+    if not isinstance(loaded, dict):
         loaded = {}
 
     for key, value in DEFAULT_DATA.items():
@@ -186,7 +204,7 @@ def load_data():
             )
 
     if not isinstance(
-        loaded["emoji_quiz"],
+        loaded.get("emoji_quiz"),
         dict
     ):
         loaded["emoji_quiz"] = {}
@@ -254,7 +272,7 @@ def save_data():
 
     except Exception as e:
 
-        print(
+        console_log(
             f"Fehler beim Speichern: {e}"
         )
 
@@ -271,13 +289,10 @@ def save_data():
 # =========================================================
 
 def now_local():
-    return datetime.now(
-        GERMANY_TZ
-    )
+    return datetime.now(GERMANY_TZ)
 
 
 def console_log(message):
-
     print(
         f"[{now_local().strftime('%d.%m.%Y %H:%M:%S')}] "
         f"{message}"
@@ -286,6 +301,12 @@ def console_log(message):
 
 def has_role(member, role_id):
 
+    if not isinstance(
+        member,
+        discord.Member
+    ):
+        return False
+
     return any(
         role.id == role_id
         for role in member.roles
@@ -293,6 +314,12 @@ def has_role(member, role_id):
 
 
 def is_admin(member):
+
+    if not isinstance(
+        member,
+        discord.Member
+    ):
+        return False
 
     return (
         member.guild_permissions.administrator
@@ -308,14 +335,17 @@ async def get_or_fetch_channel(channel_id):
 
     if channel:
 
-        if getattr(
+        guild = getattr(
             channel,
             "guild",
             None
-        ) is not None:
+        )
 
-            if channel.guild.id != ALLOWED_GUILD_ID:
-                return None
+        if guild is None:
+            return None
+
+        if guild.id != ALLOWED_GUILD_ID:
+            return None
 
         return channel
 
@@ -325,15 +355,16 @@ async def get_or_fetch_channel(channel_id):
             channel_id
         )
 
-        if getattr(
+        guild = getattr(
             channel,
             "guild",
             None
-        ) is None:
+        )
 
+        if guild is None:
             return None
 
-        if channel.guild.id != ALLOWED_GUILD_ID:
+        if guild.id != ALLOWED_GUILD_ID:
             return None
 
         return channel
@@ -366,15 +397,7 @@ class SuggestionModal(
 
     async def on_submit(self, interaction):
 
-        if not is_allowed_guild(
-            interaction.guild
-        ):
-
-            await interaction.response.send_message(
-                "❌ Dieser Bot funktioniert nur auf dem vorgesehenen Server.",
-                ephemeral=True
-            )
-
+        if not await allowed_guild_only(interaction):
             return
 
         channel = await get_or_fetch_channel(
@@ -382,12 +405,10 @@ class SuggestionModal(
         )
 
         if not channel:
-
             await interaction.response.send_message(
                 "❌ Vorschlagskanal nicht gefunden.",
                 ephemeral=True
             )
-
             return
 
         embed = discord.Embed(
@@ -428,15 +449,7 @@ class FeedbackModal(
 
     async def on_submit(self, interaction):
 
-        if not is_allowed_guild(
-            interaction.guild
-        ):
-
-            await interaction.response.send_message(
-                "❌ Dieser Bot funktioniert nur auf dem vorgesehenen Server.",
-                ephemeral=True
-            )
-
+        if not await allowed_guild_only(interaction):
             return
 
         channel = await get_or_fetch_channel(
@@ -444,12 +457,10 @@ class FeedbackModal(
         )
 
         if not channel:
-
             await interaction.response.send_message(
                 "❌ Feedbackkanal nicht gefunden.",
                 ephemeral=True
             )
-
             return
 
         embed = discord.Embed(
@@ -480,9 +491,7 @@ class CommunityPanelView(
 ):
 
     def __init__(self):
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Vorschlag senden",
@@ -496,9 +505,7 @@ class CommunityPanelView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         await interaction.response.send_modal(
@@ -517,9 +524,7 @@ class CommunityPanelView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         await interaction.response.send_modal(
@@ -527,15 +532,11 @@ class CommunityPanelView(
         )
 
 
-@bot.command(
-    name="communitypanel"
-)
+@bot.command(name="communitypanel")
 @commands.guild_only()
 async def communitypanel(ctx):
 
-    if not is_allowed_guild(
-        ctx.guild
-    ):
+    if not is_allowed_guild(ctx.guild):
         return
 
     if (
@@ -549,7 +550,6 @@ async def communitypanel(ctx):
         await ctx.send(
             "❌ Keine Berechtigung."
         )
-
         return
 
     embed = discord.Embed(
@@ -567,15 +567,11 @@ async def communitypanel(ctx):
     )
 
 
-@bot.command(
-    name="community"
-)
+@bot.command(name="community")
 @commands.guild_only()
 async def community(ctx):
 
-    if not is_allowed_guild(
-        ctx.guild
-    ):
+    if not is_allowed_guild(ctx.guild):
         return
 
     embed = discord.Embed(
@@ -607,26 +603,18 @@ class NametagModal(
 
     async def on_submit(self, interaction):
 
-        if not is_allowed_guild(
-            interaction.guild
-        ):
-
-            await interaction.response.send_message(
-                "❌ Dieser Bot funktioniert nur auf dem vorgesehenen Server.",
-                ephemeral=True
-            )
-
+        if not await allowed_guild_only(interaction):
             return
 
         data["nametags"][
             str(interaction.user.id)
-        ] = self.name.value
+        ] = self.name.value.strip()
 
         save_data()
 
         await interaction.response.send_message(
             f"✅ Dein Nametag wurde auf "
-            f"**{self.name.value}** gesetzt.",
+            f"**{self.name.value.strip()}** gesetzt.",
             ephemeral=True
         )
 
@@ -636,9 +624,7 @@ class NametagView(
 ):
 
     def __init__(self):
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Nametag setzen",
@@ -652,9 +638,7 @@ class NametagView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         await interaction.response.send_modal(
@@ -704,26 +688,18 @@ class LicensePlateModal(
 
     async def on_submit(self, interaction):
 
-        if not is_allowed_guild(
-            interaction.guild
-        ):
-
-            await interaction.response.send_message(
-                "❌ Dieser Bot funktioniert nur auf dem vorgesehenen Server.",
-                ephemeral=True
-            )
-
+        if not await allowed_guild_only(interaction):
             return
 
         data["license_plates"][
             str(interaction.user.id)
-        ] = self.plate.value
+        ] = self.plate.value.strip()
 
         save_data()
 
         await interaction.response.send_message(
             f"✅ Kennzeichen gespeichert: "
-            f"**{self.plate.value}**",
+            f"**{self.plate.value.strip()}**",
             ephemeral=True
         )
 
@@ -733,9 +709,7 @@ class LicensePlateView(
 ):
 
     def __init__(self):
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Kennzeichen setzen",
@@ -749,9 +723,7 @@ class LicensePlateView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         await interaction.response.send_modal(
@@ -802,15 +774,7 @@ class DeveloperTaskModal(
 
     async def on_submit(self, interaction):
 
-        if not is_allowed_guild(
-            interaction.guild
-        ):
-
-            await interaction.response.send_message(
-                "❌ Dieser Bot funktioniert nur auf dem vorgesehenen Server.",
-                ephemeral=True
-            )
-
+        if not await allowed_guild_only(interaction):
             return
 
         task_id = str(
@@ -821,7 +785,7 @@ class DeveloperTaskModal(
 
         data["tasks"][task_id] = {
             "id": task_id,
-            "title": self.task.value,
+            "title": self.task.value.strip(),
             "created_by": interaction.user.id,
             "created_at": now_local().isoformat(),
             "status": "open"
@@ -843,19 +807,15 @@ class DeveloperTaskView(
     discord.ui.View
 ):
 
-    def __init__(
-        self,
-        task_id=None
-    ):
+    def __init__(self, task_id):
 
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
-        self.task_id = (
-            str(task_id)
-            if task_id is not None
-            else None
+        self.task_id = str(task_id)
+
+        # Jede Aufgabe bekommt eine eigene Custom-ID.
+        self.children[0].custom_id = (
+            f"developer_task_take_{self.task_id}"
         )
 
     @discord.ui.button(
@@ -870,18 +830,7 @@ class DeveloperTaskView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
-            return
-
-        if not self.task_id:
-
-            await interaction.response.send_message(
-                "❌ Keine Aufgabe gefunden.",
-                ephemeral=True
-            )
-
+        if not await allowed_guild_only(interaction):
             return
 
         task = data["tasks"].get(
@@ -894,7 +843,6 @@ class DeveloperTaskView(
                 "❌ Aufgabe nicht gefunden.",
                 ephemeral=True
             )
-
             return
 
         if task.get("status") != "open":
@@ -903,7 +851,6 @@ class DeveloperTaskView(
                 "❌ Diese Aufgabe wurde bereits übernommen.",
                 ephemeral=True
             )
-
             return
 
         task["status"] = "taken"
@@ -923,9 +870,7 @@ class DeveloperTaskPanelView(
 ):
 
     def __init__(self):
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Neue Aufgabe",
@@ -939,9 +884,7 @@ class DeveloperTaskPanelView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         if not (
@@ -956,7 +899,6 @@ class DeveloperTaskPanelView(
                 "❌ Keine Berechtigung.",
                 ephemeral=True
             )
-
             return
 
         await interaction.response.send_modal(
@@ -964,9 +906,7 @@ class DeveloperTaskPanelView(
         )
 
 
-async def send_developer_task(
-    task_id
-):
+async def send_developer_task(task_id):
 
     channel = await get_or_fetch_channel(
         DEVELOPER_TASK_CHANNEL_ID
@@ -982,6 +922,19 @@ async def send_developer_task(
     if not task:
         return
 
+    status = task.get(
+        "status",
+        "open"
+    )
+
+    if status == "open":
+        status_text = "🟢 Offen"
+    else:
+        status_text = (
+            f"🟡 Übernommen von "
+            f"<@{task.get('taken_by')}>"
+        )
+
     embed = discord.Embed(
         title="🛠️ Entwickleraufgabe",
         description=task["title"],
@@ -996,16 +949,13 @@ async def send_developer_task(
 
     embed.add_field(
         name="Status",
-        value="🟢 Offen",
+        value=status_text,
         inline=True
     )
 
-    # Alte Aufgaben werden NICHT gelöscht.
     await channel.send(
         embed=embed,
-        view=DeveloperTaskView(
-            task_id
-        )
+        view=DeveloperTaskView(task_id)
     )
 
 
@@ -1043,9 +993,7 @@ class DeveloperShiftView(
 ):
 
     def __init__(self):
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Schicht starten",
@@ -1059,9 +1007,7 @@ class DeveloperShiftView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         user_id = str(
@@ -1077,7 +1023,6 @@ class DeveloperShiftView(
                 "❌ Du hast keine Berechtigung für eine Schicht.",
                 ephemeral=True
             )
-
             return
 
         if user_id in data["active_shifts"]:
@@ -1086,7 +1031,6 @@ class DeveloperShiftView(
                 "❌ Du bist bereits im Dienst.",
                 ephemeral=True
             )
-
             return
 
         data["active_shifts"][user_id] = {
@@ -1112,9 +1056,7 @@ class DeveloperShiftView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         user_id = str(
@@ -1127,7 +1069,6 @@ class DeveloperShiftView(
                 "❌ Du hast keine aktive Schicht.",
                 ephemeral=True
             )
-
             return
 
         shift = data["active_shifts"].pop(
@@ -1154,6 +1095,7 @@ class DeveloperShiftView(
 
 
 async def sync_shift_roles():
+    # Platzhalter für zukünftige automatische Rollen-Synchronisation.
     return
 
 
@@ -1197,20 +1139,9 @@ class DeveloperApplicationModal(
         max_length=2000
     )
 
-    async def on_submit(
-        self,
-        interaction
-    ):
+    async def on_submit(self, interaction):
 
-        if not is_allowed_guild(
-            interaction.guild
-        ):
-
-            await interaction.response.send_message(
-                "❌ Dieser Bot funktioniert nur auf dem vorgesehenen Server.",
-                ephemeral=True
-            )
-
+        if not await allowed_guild_only(interaction):
             return
 
         application_id = str(
@@ -1219,12 +1150,10 @@ class DeveloperApplicationModal(
 
         data["next_application_id"] += 1
 
-        data["applications"][
-            application_id
-        ] = {
+        data["applications"][application_id] = {
             "id": application_id,
             "user_id": interaction.user.id,
-            "reason": self.reason.value,
+            "reason": self.reason.value.strip(),
             "status": "open",
             "created_at": now_local().isoformat()
         }
@@ -1246,9 +1175,7 @@ class DeveloperApplicationView(
 ):
 
     def __init__(self):
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Bewerben",
@@ -1262,9 +1189,7 @@ class DeveloperApplicationView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         await interaction.response.send_modal(
@@ -1276,17 +1201,21 @@ class ApplicationDecisionView(
     discord.ui.View
 ):
 
-    def __init__(
-        self,
-        application_id
-    ):
+    def __init__(self, application_id):
 
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
         self.application_id = str(
             application_id
+        )
+
+        # Jede Bewerbung bekommt eigene IDs.
+        self.children[0].custom_id = (
+            f"application_accept_{self.application_id}"
+        )
+
+        self.children[1].custom_id = (
+            f"application_decline_{self.application_id}"
         )
 
     @discord.ui.button(
@@ -1301,20 +1230,15 @@ class ApplicationDecisionView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
-        if not is_admin(
-            interaction.user
-        ):
+        if not is_admin(interaction.user):
 
             await interaction.response.send_message(
                 "❌ Keine Berechtigung.",
                 ephemeral=True
             )
-
             return
 
         application = data["applications"].get(
@@ -1327,10 +1251,11 @@ class ApplicationDecisionView(
                 "❌ Bewerbung nicht gefunden.",
                 ephemeral=True
             )
-
             return
 
         application["status"] = "accepted"
+        application["decided_by"] = interaction.user.id
+        application["decided_at"] = now_local().isoformat()
 
         save_data()
 
@@ -1350,20 +1275,15 @@ class ApplicationDecisionView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
-        if not is_admin(
-            interaction.user
-        ):
+        if not is_admin(interaction.user):
 
             await interaction.response.send_message(
                 "❌ Keine Berechtigung.",
                 ephemeral=True
             )
-
             return
 
         application = data["applications"].get(
@@ -1376,10 +1296,11 @@ class ApplicationDecisionView(
                 "❌ Bewerbung nicht gefunden.",
                 ephemeral=True
             )
-
             return
 
         application["status"] = "declined"
+        application["decided_by"] = interaction.user.id
+        application["decided_at"] = now_local().isoformat()
 
         save_data()
 
@@ -1388,9 +1309,7 @@ class ApplicationDecisionView(
         )
 
 
-async def send_application(
-    application_id
-):
+async def send_application(application_id):
 
     channel = await get_or_fetch_channel(
         DEV_APPLICATION_RESULT_CHANNEL_ID
@@ -1414,7 +1333,7 @@ async def send_application(
 
     embed.add_field(
         name="Bewerber",
-        value=f"<@{application['user_id']}>"
+        value=f"<@{application['user_id']}"
     )
 
     embed.add_field(
@@ -1459,510 +1378,147 @@ async def refresh_application_panel():
 # =========================================================
 
 EMOJI_QUIZ = [
-
-    ("⚽🥅", "Fußball",
-     "Dort wird ein Ball ins Tor geschossen.",
-     "F", "Sport"),
-
-    ("🏀🧺", "Basketball",
-     "Der Ball muss durch einen Korb.",
-     "B", "Sport"),
-
-    ("🎾", "Tennis",
-     "Man spielt es mit Schläger und Netz.",
-     "T", "Sport"),
-
-    ("🏎️🏁", "Formel 1",
-     "Motorsport mit schnellen Rennwagen.",
-     "F", "Sport"),
-
-    ("🏊‍♂️🌊", "Schwimmen",
-     "Sport im Wasser.",
-     "S", "Sport"),
-
-    ("🚴‍♂️", "Radfahren",
-     "Man benutzt dafür ein Fahrrad.",
-     "R", "Sport"),
-
-    ("🏇", "Reiten",
-     "Sport mit einem Pferd.",
-     "R", "Sport"),
-
-    ("🥊", "Boxen",
-     "Kampfsport mit Handschuhen.",
-     "B", "Sport"),
-
-    ("🏐", "Volleyball",
-     "Ballspiel über ein Netz.",
-     "V", "Sport"),
-
-    ("🏓", "Tischtennis",
-     "Tennis auf einem Tisch.",
-     "T", "Sport"),
-
-    ("🇩🇪🍺🥨", "Deutschland",
-     "Ein Land in Europa.",
-     "D", "Länder"),
-
-    ("🇫🇷🥐🗼", "Frankreich",
-     "Dort steht ein sehr berühmter Turm.",
-     "F", "Länder"),
-
-    ("🇮🇹🍕🍝", "Italien",
-     "Bekannt für Pizza und Pasta.",
-     "I", "Länder"),
-
-    ("🇯🇵🍣🗻", "Japan",
-     "Inselstaat in Asien.",
-     "J", "Länder"),
-
-    ("🇺🇸🗽🍔", "USA",
-     "Dort steht die Freiheitsstatue.",
-     "U", "Länder"),
-
-    ("🇬🇧👑☕", "England",
-     "Teil des Vereinigten Königreichs.",
-     "E", "Länder"),
-
-    ("🇪🇸💃🥘", "Spanien",
-     "Bekannt für Flamenco und Paella.",
-     "S", "Länder"),
-
-    ("🇧🇷⚽🌴", "Brasilien",
-     "Großes Land in Südamerika.",
-     "B", "Länder"),
-
-    ("🇨🇦🍁", "Kanada",
-     "Das Ahornblatt ist ein bekanntes Symbol.",
-     "K", "Länder"),
-
-    ("🇦🇺🦘", "Australien",
-     "Dort leben Kängurus.",
-     "A", "Länder"),
-
-    ("🇬🇷🏛️", "Griechenland",
-     "Bekannt für antike Tempel.",
-     "G", "Länder"),
-
-    ("🇳🇱🌷🚲", "Niederlande",
-     "Bekannt für Tulpen und Fahrräder.",
-     "N", "Länder"),
-
-    ("🇨🇭🏔️🧀", "Schweiz",
-     "Bekannt für Berge und Käse.",
-     "S", "Länder"),
-
-    ("🇳🇴❄️🏔️", "Norwegen",
-     "Skandinavisches Land mit vielen Fjorden.",
-     "N", "Länder"),
-
-    ("🇮🇸🌋❄️", "Island",
-     "Insel mit Vulkanen und Gletschern.",
-     "I", "Länder"),
-
-    ("🍕", "Pizza",
-     "Rundes Gericht mit Belag.",
-     "P", "Essen"),
-
-    ("🍔🍟", "Burger",
-     "Typisches Fast Food mit Brötchen.",
-     "B", "Essen"),
-
-    ("🌭", "Hotdog",
-     "Wurst im länglichen Brötchen.",
-     "H", "Essen"),
-
-    ("🍣", "Sushi",
-     "Japanisches Gericht mit Reis.",
-     "S", "Essen"),
-
-    ("🌮", "Taco",
-     "Mexikanisches Gericht mit gefüllter Schale.",
-     "T", "Essen"),
-
-    ("🍝🍅", "Spaghetti",
-     "Lange italienische Nudeln.",
-     "S", "Essen"),
-
-    ("🥨", "Brezel",
-     "Beliebtes deutsches Gebäck.",
-     "B", "Essen"),
-
-    ("🍦", "Eis",
-     "Kalt und süß.",
-     "E", "Essen"),
-
-    ("🍫", "Schokolade",
-     "Süße Nascherei aus Kakao.",
-     "S", "Essen"),
-
-    ("🍿🎬", "Popcorn",
-     "Typischer Snack im Kino.",
-     "P", "Essen"),
-
-    ("🍎👩‍⚕️", "Apfel",
-     "Eine bekannte Frucht.",
-     "A", "Essen"),
-
-    ("🍌", "Banane",
-     "Gelbe Frucht.",
-     "B", "Essen"),
-
-    ("🍉☀️", "Wassermelone",
-     "Große Sommerfrucht mit viel Wasser.",
-     "W", "Essen"),
-
-    ("🥞🍁", "Pfannkuchen",
-     "Flaches Gericht, oft mit Sirup.",
-     "P", "Essen"),
-
-    ("🍰🎂", "Kuchen",
-     "Gibt es oft zum Geburtstag.",
-     "K", "Essen"),
-
-    ("🐶", "Hund",
-     "Treuer Begleiter des Menschen.",
-     "H", "Tiere"),
-
-    ("🐱", "Katze",
-     "Sagt häufig Miau.",
-     "K", "Tiere"),
-
-    ("🦁", "Löwe",
-     "Große Raubkatze.",
-     "L", "Tiere"),
-
-    ("🐯", "Tiger",
-     "Gestreifte Raubkatze.",
-     "T", "Tiere"),
-
-    ("🐘", "Elefant",
-     "Sehr großes Tier mit Rüssel.",
-     "E", "Tiere"),
-
-    ("🦒", "Giraffe",
-     "Hat einen sehr langen Hals.",
-     "G", "Tiere"),
-
-    ("🐼🎋", "Panda",
-     "Bekommt man oft mit Bambus verbunden.",
-     "P", "Tiere"),
-
-    ("🐨🌿", "Koala",
-     "Lebt in Australien.",
-     "K", "Tiere"),
-
-    ("🦊", "Fuchs",
-     "Rotbraunes Wildtier.",
-     "F", "Tiere"),
-
-    ("🐺🌕", "Wolf",
-     "Lebt oft in Rudeln.",
-     "W", "Tiere"),
-
-    ("🐸", "Frosch",
-     "Kann weit springen.",
-     "F", "Tiere"),
-
-    ("🐍", "Schlange",
-     "Hat keine Beine.",
-     "S", "Tiere"),
-
-    ("🦈🌊", "Hai",
-     "Raubtier des Meeres.",
-     "H", "Tiere"),
-
-    ("🐬🌊", "Delfin",
-     "Sehr intelligentes Meerestier.",
-     "D", "Tiere"),
-
-    ("🐧❄️", "Pinguin",
-     "Vogel, der nicht fliegen kann.",
-     "P", "Tiere"),
-
-    ("🗼🇫🇷", "Eiffelturm",
-     "Berühmtes Wahrzeichen in Paris.",
-     "E", "Orte"),
-
-    ("🗽🇺🇸", "Freiheitsstatue",
-     "Berühmtes Wahrzeichen in New York.",
-     "F", "Orte"),
-
-    ("🏰👑", "Schloss",
-     "Dort können Könige und Königinnen leben.",
-     "S", "Orte"),
-
-    ("🏝️🌊", "Insel",
-     "Land, das von Wasser umgeben ist.",
-     "I", "Orte"),
-
-    ("🏖️☀️", "Strand",
-     "Sand, Meer und Sonne.",
-     "S", "Orte"),
-
-    ("🏔️❄️", "Berg",
-     "Hohe Landschaftsform.",
-     "B", "Orte"),
-
-    ("🌋🔥", "Vulkan",
-     "Kann Lava ausstoßen.",
-     "V", "Orte"),
-
-    ("🏫📚", "Schule",
-     "Dort lernen Schüler.",
-     "S", "Orte"),
-
-    ("🏥🚑", "Krankenhaus",
-     "Dort arbeiten viele Ärzte.",
-     "K", "Orte"),
-
-    ("✈️🌍", "Flughafen",
-     "Dort starten und landen Flugzeuge.",
-     "F", "Orte"),
-
-    ("🎬🦸", "Superheldenfilm",
-     "Film mit außergewöhnlichen Helden.",
-     "S", "Filme"),
-
-    ("🦖🌴", "Jurassic Park",
-     "Dinosaurier sind hier das Thema.",
-     "J", "Filme"),
-
-    ("🧙‍♂️💍", "Der Herr der Ringe",
-     "Fantasy mit einem besonderen Ring.",
-     "D", "Filme"),
-
-    ("🧊👸", "Die Eiskönigin",
-     "Animationsfilm mit Eis und einer Königin.",
-     "D", "Filme"),
-
-    ("🤖🚗", "Transformers",
-     "Roboter können zu Fahrzeugen werden.",
-     "T", "Filme"),
-
-    ("🦁👑", "Der König der Löwen",
-     "Ein Löwe steht im Mittelpunkt.",
-     "D", "Filme"),
-
-    ("🐠🔎", "Findet Nemo",
-     "Ein kleiner Fisch wird gesucht.",
-     "F", "Filme"),
-
-    ("👽🚲🌕", "E.T.",
-     "Ein Außerirdischer und ein Fahrrad.",
-     "E", "Filme"),
-
-    ("🏴‍☠️🚢", "Piratenfilm",
-     "Abenteuer auf hoher See.",
-     "P", "Filme"),
-
-    ("🧙‍♂️⚡", "Harry Potter",
-     "Zauberei und ein junger Zauberer.",
-     "H", "Filme"),
-
-    ("👨‍⚕️🏥", "Arzt",
-     "Arbeitet häufig im Krankenhaus.",
-     "A", "Berufe"),
-
-    ("👨‍🚒🔥", "Feuerwehrmann",
-     "Hilft bei Bränden und Notfällen.",
-     "F", "Berufe"),
-
-    ("👮‍♂️🚓", "Polizist",
-     "Arbeitet für die Polizei.",
-     "P", "Berufe"),
-
-    ("👨‍🍳🍳", "Koch",
-     "Bereitet Essen zu.",
-     "K", "Berufe"),
-
-    ("👨‍🏫📚", "Lehrer",
-     "Unterrichtet Schüler.",
-     "L", "Berufe"),
-
-    ("👨‍🔧🔩", "Mechaniker",
-     "Arbeitet an Fahrzeugen und Maschinen.",
-     "M", "Berufe"),
-
-    ("👨‍💻💻", "Programmierer",
-     "Schreibt Software und Code.",
-     "P", "Berufe"),
-
-    ("👨‍✈️✈️", "Pilot",
-     "Fliegt Flugzeuge.",
-     "P", "Berufe"),
-
-    ("👨‍🚀🚀", "Astronaut",
-     "Reist ins Weltall.",
-     "A", "Berufe"),
-
-    ("📸👨‍🎨", "Fotograf",
-     "Macht Fotos.",
-     "F", "Berufe"),
-
-    ("🌧️☂️", "Regenschirm",
-     "Hilft bei schlechtem Wetter.",
-     "R", "Alltag"),
-
-    ("📱💬", "Handy",
-     "Damit kann man telefonieren.",
-     "H", "Alltag"),
-
-    ("💻⌨️", "Computer",
-     "Elektronisches Gerät zum Arbeiten und Spielen.",
-     "C", "Alltag"),
-
-    ("🚗⛽", "Auto",
-     "Fährt auf Straßen.",
-     "A", "Alltag"),
-
-    ("🚲🔔", "Fahrrad",
-     "Hat zwei Räder und Pedale.",
-     "F", "Alltag"),
-
-    ("⌚⏰", "Uhr",
-     "Zeigt die Zeit.",
-     "U", "Alltag"),
-
-    ("🔑🚪", "Schlüssel",
-     "Öffnet zum Beispiel eine Tür.",
-     "S", "Alltag"),
-
-    ("🎒📚", "Rucksack",
-     "Darin kann man Sachen transportieren.",
-     "R", "Alltag"),
-
-    ("🎧🎵", "Kopfhörer",
-     "Damit hört man Musik.",
-     "K", "Alltag"),
-
-    ("📺🍿", "Fernseher",
-     "Damit kann man Filme und Serien schauen.",
-     "F", "Alltag"),
-
-    ("🎄🎁", "Weihnachten",
-     "Fest mit Geschenken und Tannenbaum.",
-     "W", "Feste"),
-
-    ("🎃👻", "Halloween",
-     "Fest mit Kürbissen und Verkleidungen.",
-     "H", "Feste"),
-
-    ("🎂🎉", "Geburtstag",
-     "Man feiert den Tag der Geburt.",
-     "G", "Feste"),
-
-    ("❤️💐", "Valentinstag",
-     "Tag rund um Liebe und Freundschaft.",
-     "V", "Feste"),
-
-    ("🎆🥳", "Silvester",
-     "Feier zum Jahreswechsel.",
-     "S", "Feste"),
-
-    ("🐰🥚", "Ostern",
-     "Fest mit Eiern und Osterhase.",
-     "O", "Feste"),
-
-    ("🌞🏖️", "Sommer",
-     "Warme Jahreszeit.",
-     "S", "Jahreszeiten"),
-
-    ("🍂🌧️", "Herbst",
-     "Blätter werden bunt und fallen.",
-     "H", "Jahreszeiten"),
-
-    ("❄️⛄", "Winter",
-     "Kalte Jahreszeit.",
-     "W", "Jahreszeiten"),
-
-    ("🌸🌱", "Frühling",
-     "Alles beginnt wieder zu blühen.",
-     "F", "Jahreszeiten"),
-
-    ("🧊🥤", "Eiswürfel",
-     "Gefrorenes Wasser.",
-     "E", "Gegenstände"),
-
-    ("✏️📖", "Schulzeug",
-     "Findet man häufig im Unterricht.",
-     "S", "Gegenstände"),
-
-    ("☂️🌧️", "Regenschirm",
-     "Schützt vor Regen.",
-     "R", "Gegenstände"),
-
-    ("🕶️☀️", "Sonnenbrille",
-     "Schützt die Augen vor Sonne.",
-     "S", "Gegenstände"),
-
-    ("🎸🎵", "Gitarre",
-     "Musikinstrument mit Saiten.",
-     "G", "Gegenstände"),
-
-    ("🥁🎵", "Schlagzeug",
-     "Musikinstrument zum Schlagen.",
-     "S", "Gegenstände"),
-
-    ("🎹🎵", "Klavier",
-     "Tasteninstrument.",
-     "K", "Gegenstände"),
-
-    ("🎨🖌️", "Malen",
-     "Dabei benutzt man oft Pinsel und Farben.",
-     "M", "Hobbys"),
-
-    ("📚🛋️", "Lesen",
-     "Man macht es mit Büchern.",
-     "L", "Hobbys"),
-
-    ("🎮🕹️", "Gaming",
-     "Spielen mit Konsole oder Computer.",
-     "G", "Hobbys"),
-
-    ("🌙⭐", "Nacht",
-     "Die Sonne ist nicht am Himmel.",
-     "N", "Sonstiges"),
-
-    ("☀️🌡️", "Hitze",
-     "Sehr hohe Temperatur.",
-     "H", "Sonstiges"),
-
-    ("🌨️❄️", "Schnee",
-     "Weiße Niederschläge im Winter.",
-     "S", "Sonstiges"),
-
-    ("🌈🌧️", "Regenbogen",
-     "Kann nach Regen erscheinen.",
-     "R", "Sonstiges"),
-
-    ("⚡🌩️", "Gewitter",
-     "Blitz und Donner gehören dazu.",
-     "G", "Sonstiges"),
-
-    ("🔥🪵", "Feuer",
-     "Kann sehr heiß sein.",
-     "F", "Sonstiges"),
-
-    ("💤🛏️", "Schlafen",
-     "Macht man meistens nachts.",
-     "S", "Sonstiges"),
-
-    ("😂🤣", "Lachen",
-     "Macht man bei etwas Lustigem.",
-     "L", "Sonstiges"),
-
-    ("😴🛏️", "Müde",
-     "So fühlt man sich vor dem Schlafen.",
-     "M", "Sonstiges"),
-
-    ("🎉🥳", "Party",
-     "Musik, Spaß und Feiern.",
-     "P", "Sonstiges")
+    ("⚽🥅", "Fußball", "Dort wird ein Ball ins Tor geschossen.", "F", "Sport"),
+    ("🏀🧺", "Basketball", "Der Ball muss durch einen Korb.", "B", "Sport"),
+    ("🎾", "Tennis", "Man spielt es mit Schläger und Netz.", "T", "Sport"),
+    ("🏎️🏁", "Formel 1", "Motorsport mit schnellen Rennwagen.", "F", "Sport"),
+    ("🏊‍♂️🌊", "Schwimmen", "Sport im Wasser.", "S", "Sport"),
+    ("🚴‍♂️", "Radfahren", "Man benutzt dafür ein Fahrrad.", "R", "Sport"),
+    ("🏇", "Reiten", "Sport mit einem Pferd.", "R", "Sport"),
+    ("🥊", "Boxen", "Kampfsport mit Handschuhen.", "B", "Sport"),
+    ("🏐", "Volleyball", "Ballspiel über ein Netz.", "V", "Sport"),
+    ("🏓", "Tischtennis", "Tennis auf einem Tisch.", "T", "Sport"),
+
+    ("🇩🇪🍺🥨", "Deutschland", "Ein Land in Europa.", "D", "Länder"),
+    ("🇫🇷🥐🗼", "Frankreich", "Dort steht ein sehr berühmter Turm.", "F", "Länder"),
+    ("🇮🇹🍕🍝", "Italien", "Bekannt für Pizza und Pasta.", "I", "Länder"),
+    ("🇯🇵🍣🗻", "Japan", "Inselstaat in Asien.", "J", "Länder"),
+    ("🇺🇸🗽🍔", "USA", "Dort steht die Freiheitsstatue.", "U", "Länder"),
+    ("🇬🇧👑☕", "England", "Teil des Vereinigten Königreichs.", "E", "Länder"),
+    ("🇪🇸💃🥘", "Spanien", "Bekannt für Flamenco und Paella.", "S", "Länder"),
+    ("🇧🇷⚽🌴", "Brasilien", "Großes Land in Südamerika.", "B", "Länder"),
+    ("🇨🇦🍁", "Kanada", "Das Ahornblatt ist ein bekanntes Symbol.", "K", "Länder"),
+    ("🇦🇺🦘", "Australien", "Dort leben Kängurus.", "A", "Länder"),
+    ("🇬🇷🏛️", "Griechenland", "Bekannt für antike Tempel.", "G", "Länder"),
+    ("🇳🇱🌷🚲", "Niederlande", "Bekannt für Tulpen und Fahrräder.", "N", "Länder"),
+    ("🇨🇭🏔️🧀", "Schweiz", "Bekannt für Berge und Käse.", "S", "Länder"),
+    ("🇳🇴❄️🏔️", "Norwegen", "Skandinavisches Land mit vielen Fjorden.", "N", "Länder"),
+    ("🇮🇸🌋❄️", "Island", "Insel mit Vulkanen und Gletschern.", "I", "Länder"),
+
+    ("🍕", "Pizza", "Rundes Gericht mit Belag.", "P", "Essen"),
+    ("🍔🍟", "Burger", "Typisches Fast Food mit Brötchen.", "B", "Essen"),
+    ("🌭", "Hotdog", "Wurst im länglichen Brötchen.", "H", "Essen"),
+    ("🍣", "Sushi", "Japanisches Gericht mit Reis.", "S", "Essen"),
+    ("🌮", "Taco", "Mexikanisches Gericht mit gefüllter Schale.", "T", "Essen"),
+    ("🍝🍅", "Spaghetti", "Lange italienische Nudeln.", "S", "Essen"),
+    ("🥨", "Brezel", "Beliebtes deutsches Gebäck.", "B", "Essen"),
+    ("🍦", "Eis", "Kalt und süß.", "E", "Essen"),
+    ("🍫", "Schokolade", "Süße Nascherei aus Kakao.", "S", "Essen"),
+    ("🍿🎬", "Popcorn", "Typischer Snack im Kino.", "P", "Essen"),
+    ("🍎👩‍⚕️", "Apfel", "Eine bekannte Frucht.", "A", "Essen"),
+    ("🍌", "Banane", "Gelbe Frucht.", "B", "Essen"),
+    ("🍉☀️", "Wassermelone", "Große Sommerfrucht mit viel Wasser.", "W", "Essen"),
+    ("🥞🍁", "Pfannkuchen", "Flaches Gericht, oft mit Sirup.", "P", "Essen"),
+    ("🍰🎂", "Kuchen", "Gibt es oft zum Geburtstag.", "K", "Essen"),
+
+    ("🐶", "Hund", "Treuer Begleiter des Menschen.", "H", "Tiere"),
+    ("🐱", "Katze", "Sagt häufig Miau.", "K", "Tiere"),
+    ("🦁", "Löwe", "Große Raubkatze.", "L", "Tiere"),
+    ("🐯", "Tiger", "Gestreifte Raubkatze.", "T", "Tiere"),
+    ("🐘", "Elefant", "Sehr großes Tier mit Rüssel.", "E", "Tiere"),
+    ("🦒", "Giraffe", "Hat einen sehr langen Hals.", "G", "Tiere"),
+    ("🐼🎋", "Panda", "Bekommt man oft mit Bambus verbunden.", "P", "Tiere"),
+    ("🐨🌿", "Koala", "Lebt in Australien.", "K", "Tiere"),
+    ("🦊", "Fuchs", "Rotbraunes Wildtier.", "F", "Tiere"),
+    ("🐺🌕", "Wolf", "Lebt oft in Rudeln.", "W", "Tiere"),
+    ("🐸", "Frosch", "Kann weit springen.", "F", "Tiere"),
+    ("🐍", "Schlange", "Hat keine Beine.", "S", "Tiere"),
+    ("🦈🌊", "Hai", "Raubtier des Meeres.", "H", "Tiere"),
+    ("🐬🌊", "Delfin", "Sehr intelligentes Meerestier.", "D", "Tiere"),
+    ("🐧❄️", "Pinguin", "Vogel, der nicht fliegen kann.", "P", "Tiere"),
+
+    ("🗼🇫🇷", "Eiffelturm", "Berühmtes Wahrzeichen in Paris.", "E", "Orte"),
+    ("🗽🇺🇸", "Freiheitsstatue", "Berühmtes Wahrzeichen in New York.", "F", "Orte"),
+    ("🏰👑", "Schloss", "Dort können Könige und Königinnen leben.", "S", "Orte"),
+    ("🏝️🌊", "Insel", "Land, das von Wasser umgeben ist.", "I", "Orte"),
+    ("🏖️☀️", "Strand", "Sand, Meer und Sonne.", "S", "Orte"),
+    ("🏔️❄️", "Berg", "Hohe Landschaftsform.", "B", "Orte"),
+    ("🌋🔥", "Vulkan", "Kann Lava ausstoßen.", "V", "Orte"),
+    ("🏫📚", "Schule", "Dort lernen Schüler.", "S", "Orte"),
+    ("🏥🚑", "Krankenhaus", "Dort arbeiten viele Ärzte.", "K", "Orte"),
+    ("✈️🌍", "Flughafen", "Dort starten und landen Flugzeuge.", "F", "Orte"),
+
+    ("🎬🦸", "Superheldenfilm", "Film mit außergewöhnlichen Helden.", "S", "Filme"),
+    ("🦖🌴", "Jurassic Park", "Dinosaurier sind hier das Thema.", "J", "Filme"),
+    ("🧙‍♂️💍", "Der Herr der Ringe", "Fantasy mit einem besonderen Ring.", "D", "Filme"),
+    ("🧊👸", "Die Eiskönigin", "Animationsfilm mit Eis und einer Königin.", "D", "Filme"),
+    ("🤖🚗", "Transformers", "Roboter können zu Fahrzeugen werden.", "T", "Filme"),
+    ("🦁👑", "Der König der Löwen", "Ein Löwe steht im Mittelpunkt.", "D", "Filme"),
+    ("🐠🔎", "Findet Nemo", "Ein kleiner Fisch wird gesucht.", "F", "Filme"),
+    ("👽🚲🌕", "E.T.", "Ein Außerirdischer und ein Fahrrad.", "E", "Filme"),
+    ("🏴‍☠️🚢", "Piratenfilm", "Abenteuer auf hoher See.", "P", "Filme"),
+    ("🧙‍♂️⚡", "Harry Potter", "Zauberei und ein junger Zauberer.", "H", "Filme"),
+
+    ("👨‍⚕️🏥", "Arzt", "Arbeitet häufig im Krankenhaus.", "A", "Berufe"),
+    ("👨‍🚒🔥", "Feuerwehrmann", "Hilft bei Bränden und Notfällen.", "F", "Berufe"),
+    ("👮‍♂️🚓", "Polizist", "Arbeitet für die Polizei.", "P", "Berufe"),
+    ("👨‍🍳🍳", "Koch", "Bereitet Essen zu.", "K", "Berufe"),
+    ("👨‍🏫📚", "Lehrer", "Unterrichtet Schüler.", "L", "Berufe"),
+    ("👨‍🔧🔩", "Mechaniker", "Arbeitet an Fahrzeugen und Maschinen.", "M", "Berufe"),
+    ("👨‍💻💻", "Programmierer", "Schreibt Software und Code.", "P", "Berufe"),
+    ("👨‍✈️✈️", "Pilot", "Fliegt Flugzeuge.", "P", "Berufe"),
+    ("👨‍🚀🚀", "Astronaut", "Reist ins Weltall.", "A", "Berufe"),
+    ("📸👨‍🎨", "Fotograf", "Macht Fotos.", "F", "Berufe"),
+
+    ("🌧️☂️", "Regenschirm", "Hilft bei schlechtem Wetter.", "R", "Alltag"),
+    ("📱💬", "Handy", "Damit kann man telefonieren.", "H", "Alltag"),
+    ("💻⌨️", "Computer", "Elektronisches Gerät zum Arbeiten und Spielen.", "C", "Alltag"),
+    ("🚗⛽", "Auto", "Fährt auf Straßen.", "A", "Alltag"),
+    ("🚲🔔", "Fahrrad", "Hat zwei Räder und Pedale.", "F", "Alltag"),
+    ("⌚⏰", "Uhr", "Zeigt die Zeit.", "U", "Alltag"),
+    ("🔑🚪", "Schlüssel", "Öffnet zum Beispiel eine Tür.", "S", "Alltag"),
+    ("🎒📚", "Rucksack", "Darin kann man Sachen transportieren.", "R", "Alltag"),
+    ("🎧🎵", "Kopfhörer", "Damit hört man Musik.", "K", "Alltag"),
+    ("📺🍿", "Fernseher", "Damit kann man Filme und Serien schauen.", "F", "Alltag"),
+
+    ("🎄🎁", "Weihnachten", "Fest mit Geschenken und Tannenbaum.", "W", "Feste"),
+    ("🎃👻", "Halloween", "Fest mit Kürbissen und Verkleidungen.", "H", "Feste"),
+    ("🎂🎉", "Geburtstag", "Man feiert den Tag der Geburt.", "G", "Feste"),
+    ("❤️💐", "Valentinstag", "Tag rund um Liebe und Freundschaft.", "V", "Feste"),
+    ("🎆🥳", "Silvester", "Feier zum Jahreswechsel.", "S", "Feste"),
+    ("🐰🥚", "Ostern", "Fest mit Eiern und Osterhase.", "O", "Feste"),
+
+    ("🌞🏖️", "Sommer", "Warme Jahreszeit.", "S", "Jahreszeiten"),
+    ("🍂🌧️", "Herbst", "Blätter werden bunt und fallen.", "H", "Jahreszeiten"),
+    ("❄️⛄", "Winter", "Kalte Jahreszeit.", "W", "Jahreszeiten"),
+    ("🌸🌱", "Frühling", "Alles beginnt wieder zu blühen.", "F", "Jahreszeiten"),
+
+    ("🧊🥤", "Eiswürfel", "Gefrorenes Wasser.", "E", "Gegenstände"),
+    ("✏️📖", "Schulzeug", "Findet man häufig im Unterricht.", "S", "Gegenstände"),
+    ("☂️🌧️", "Regenschirm", "Schützt vor Regen.", "R", "Gegenstände"),
+    ("🕶️☀️", "Sonnenbrille", "Schützt die Augen vor Sonne.", "S", "Gegenstände"),
+    ("🎸🎵", "Gitarre", "Musikinstrument mit Saiten.", "G", "Gegenstände"),
+    ("🥁🎵", "Schlagzeug", "Musikinstrument zum Schlagen.", "S", "Gegenstände"),
+    ("🎹🎵", "Klavier", "Tasteninstrument.", "K", "Gegenstände"),
+
+    ("🎨🖌️", "Malen", "Dabei benutzt man oft Pinsel und Farben.", "M", "Hobbys"),
+    ("📚🛋️", "Lesen", "Man macht es mit Büchern.", "L", "Hobbys"),
+    ("🎮🕹️", "Gaming", "Spielen mit Konsole oder Computer.", "G", "Hobbys"),
+
+    ("🌙⭐", "Nacht", "Die Sonne ist nicht am Himmel.", "N", "Sonstiges"),
+    ("☀️🌡️", "Hitze", "Sehr hohe Temperatur.", "H", "Sonstiges"),
+    ("🌨️❄️", "Schnee", "Weiße Niederschläge im Winter.", "S", "Sonstiges"),
+    ("🌈🌧️", "Regenbogen", "Kann nach Regen erscheinen.", "R", "Sonstiges"),
+    ("⚡🌩️", "Gewitter", "Blitz und Donner gehören dazu.", "G", "Sonstiges"),
+    ("🔥🪵", "Feuer", "Kann sehr heiß sein.", "F", "Sonstiges"),
+    ("💤🛏️", "Schlafen", "Macht man meistens nachts.", "S", "Sonstiges"),
+    ("😂🤣", "Lachen", "Macht man bei etwas Lustigem.", "L", "Sonstiges"),
+    ("😴🛏️", "Müde", "So fühlt man sich vor dem Schlafen.", "M", "Sonstiges"),
+    ("🎉🥳", "Party", "Musik, Spaß und Feiern.", "P", "Sonstiges")
 ]
 
 # =========================================================
-# QUIZ COOLDOWNS
+# QUIZ
 # =========================================================
 
 quiz_hint_cooldowns = {}
@@ -1970,10 +1526,12 @@ quiz_skip_cooldowns = {}
 quiz_initial_cooldowns = {}
 quiz_answer_cooldowns = {}
 
+quiz_lock = asyncio.Lock()
+
 
 def normalize_answer(text):
 
-    text = text.lower().strip()
+    text = str(text).lower().strip()
 
     replacements = {
         "ä": "ae",
@@ -1983,10 +1541,7 @@ def normalize_answer(text):
     }
 
     for a, b in replacements.items():
-        text = text.replace(
-            a,
-            b
-        )
+        text = text.replace(a, b)
 
     allowed = (
         "abcdefghijklmnopqrstuvwxyz"
@@ -2010,11 +1565,7 @@ def get_quiz_state():
         "current"
     )
 
-    if not isinstance(
-        state,
-        dict
-    ):
-
+    if not isinstance(state, dict):
         state = {}
 
     return state
@@ -2027,15 +1578,11 @@ def create_new_quiz():
     )
 
     available = list(
-        range(
-            len(EMOJI_QUIZ)
-        )
+        range(len(EMOJI_QUIZ))
     )
 
     if old_index in available:
-        available.remove(
-            old_index
-        )
+        available.remove(old_index)
 
     index = random.choice(
         available
@@ -2059,13 +1606,9 @@ def create_new_quiz():
     return data["emoji_quiz"]["current"]
 
 
-def get_user_quiz_stats(
-    user_id
-):
+def get_user_quiz_stats(user_id):
 
-    user_id = str(
-        user_id
-    )
+    user_id = str(user_id)
 
     users = get_quiz_state().setdefault(
         "users",
@@ -2083,9 +1626,7 @@ def get_user_quiz_stats(
     return users[user_id]
 
 
-def get_points(
-    user_id
-):
+def get_points(user_id):
 
     return int(
         data["emoji_quiz"]["points"].get(
@@ -2095,39 +1636,29 @@ def get_points(
     )
 
 
-def add_points(
-    user_id,
-    amount
-):
+def add_points(user_id, amount):
 
-    user_id = str(
-        user_id
-    )
+    user_id = str(user_id)
 
     data["emoji_quiz"]["points"][user_id] = (
-        get_points(user_id)
-        + amount
+        get_points(user_id) + amount
     )
 
     save_data()
 
 
 # =========================================================
-# RESET
+# RESET EMOJI QUIZ
 # =========================================================
 
-@bot.command(
-    name="reset"
-)
+@bot.command(name="reset")
 @commands.guild_only()
 async def reset_emoji_quiz_points(
     ctx,
     member: discord.Member = None
 ):
 
-    if not is_allowed_guild(
-        ctx.guild
-    ):
+    if not is_allowed_guild(ctx.guild):
         return
 
     if not has_role(
@@ -2139,7 +1670,6 @@ async def reset_emoji_quiz_points(
             "❌ Du hast keine Berechtigung "
             "für diesen Befehl."
         )
-
         return
 
     if member is None:
@@ -2147,12 +1677,9 @@ async def reset_emoji_quiz_points(
         await ctx.send(
             "❌ Benutzung: `?reset @User`"
         )
-
         return
 
-    user_id = str(
-        member.id
-    )
+    user_id = str(member.id)
 
     data["emoji_quiz"]["points"][user_id] = 0
 
@@ -2173,9 +1700,7 @@ class EmojiQuizView(
 ):
 
     def __init__(self):
-        super().__init__(
-            timeout=None
-        )
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Tipp anfordern",
@@ -2189,35 +1714,26 @@ class EmojiQuizView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         user_id = interaction.user.id
         now = time.monotonic()
 
-        if (
-            now
-            - quiz_hint_cooldowns.get(
-                user_id,
-                0
-            )
-            < 4
-        ):
+        if now - quiz_hint_cooldowns.get(
+            user_id,
+            0
+        ) < 4:
 
             await interaction.response.send_message(
                 "⏳ Warte kurz.",
                 ephemeral=True
             )
-
             return
 
         quiz_hint_cooldowns[user_id] = now
 
-        stats = get_user_quiz_stats(
-            user_id
-        )
+        stats = get_user_quiz_stats(user_id)
 
         if stats["hints"] >= 3:
 
@@ -2225,7 +1741,6 @@ class EmojiQuizView(
                 "❌ Deine 3 Tipps sind aufgebraucht.",
                 ephemeral=True
             )
-
             return
 
         stats["hints"] += 1
@@ -2253,35 +1768,26 @@ class EmojiQuizView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         user_id = interaction.user.id
         now = time.monotonic()
 
-        if (
-            now
-            - quiz_initial_cooldowns.get(
-                user_id,
-                0
-            )
-            < 4
-        ):
+        if now - quiz_initial_cooldowns.get(
+            user_id,
+            0
+        ) < 4:
 
             await interaction.response.send_message(
                 "⏳ Warte kurz.",
                 ephemeral=True
             )
-
             return
 
         quiz_initial_cooldowns[user_id] = now
 
-        stats = get_user_quiz_stats(
-            user_id
-        )
+        stats = get_user_quiz_stats(user_id)
 
         if stats["initials"] >= 3:
 
@@ -2290,7 +1796,6 @@ class EmojiQuizView(
                 "sind aufgebraucht.",
                 ephemeral=True
             )
-
             return
 
         stats["initials"] += 1
@@ -2328,35 +1833,26 @@ class EmojiQuizView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         user_id = interaction.user.id
         now = time.monotonic()
 
-        if (
-            now
-            - quiz_skip_cooldowns.get(
-                user_id,
-                0
-            )
-            < 10
-        ):
+        if now - quiz_skip_cooldowns.get(
+            user_id,
+            0
+        ) < 10:
 
             await interaction.response.send_message(
                 "⏳ Bitte warte kurz.",
                 ephemeral=True
             )
-
             return
 
         quiz_skip_cooldowns[user_id] = now
 
-        stats = get_user_quiz_stats(
-            user_id
-        )
+        stats = get_user_quiz_stats(user_id)
 
         if stats["skips"] >= 3:
 
@@ -2364,7 +1860,6 @@ class EmojiQuizView(
                 "❌ Du hast bereits 3 Überspringen benutzt.",
                 ephemeral=True
             )
-
             return
 
         stats["skips"] += 1
@@ -2378,7 +1873,8 @@ class EmojiQuizView(
             ephemeral=True
         )
 
-        await send_new_quiz_panel()
+        async with quiz_lock:
+            await send_new_quiz_panel()
 
     @discord.ui.button(
         label="Leaderboard",
@@ -2392,18 +1888,14 @@ class EmojiQuizView(
         button
     ):
 
-        if not await allowed_guild_only(
-            interaction
-        ):
+        if not await allowed_guild_only(interaction):
             return
 
         points = data["emoji_quiz"]["points"]
 
         sorted_users = sorted(
             points.items(),
-            key=lambda item: int(
-                item[1]
-            ),
+            key=lambda item: int(item[1]),
             reverse=True
         )
 
@@ -2413,7 +1905,6 @@ class EmojiQuizView(
                 "🏆 Noch hat niemand Punkte.",
                 ephemeral=True
             )
-
             return
 
         lines = []
@@ -2465,10 +1956,7 @@ async def send_new_quiz_panel():
             if not message.embeds:
                 continue
 
-            if (
-                message.embeds[0].title
-                == "🎯 Emoji Quiz"
-            ):
+            if message.embeds[0].title == "🎯 Emoji Quiz":
 
                 try:
                     await message.delete()
@@ -2502,9 +1990,7 @@ async def send_new_quiz_panel():
         view=EmojiQuizView()
     )
 
-    data["panel_messages"][
-        "emoji_quiz"
-    ] = message.id
+    data["panel_messages"]["emoji_quiz"] = message.id
 
     save_data()
 
@@ -2526,15 +2012,13 @@ async def ensure_quiz_panel():
 # =========================================================
 
 @bot.event
-async def on_message(
-    message
-):
+async def on_message(message):
 
     # Bots ignorieren
     if message.author.bot:
         return
 
-    # DMs komplett ignorieren
+    # DMs ignorieren
     if message.guild is None:
         return
 
@@ -2555,14 +2039,10 @@ async def on_message(
             user_id = message.author.id
             now = time.monotonic()
 
-            if (
-                now
-                - quiz_answer_cooldowns.get(
-                    user_id,
-                    0
-                )
-                < 2
-            ):
+            if now - quiz_answer_cooldowns.get(
+                user_id,
+                0
+            ) < 2:
 
                 try:
                     await message.delete()
@@ -2573,53 +2053,52 @@ async def on_message(
 
             quiz_answer_cooldowns[user_id] = now
 
-            current = get_quiz_state()
+            async with quiz_lock:
 
-            correct = normalize_answer(
-                current.get(
-                    "answer",
-                    ""
-                )
-            )
+                current = get_quiz_state()
 
-            given = normalize_answer(
-                answer_text
-            )
-
-            if given == correct:
-
-                # =================================================
-                # EXAKT 1 PUNKT
-                # =================================================
-
-                add_points(
-                    user_id,
-                    1
+                correct = normalize_answer(
+                    current.get(
+                        "answer",
+                        ""
+                    )
                 )
 
-                points = get_points(
-                    user_id
+                given = normalize_answer(
+                    answer_text
                 )
 
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
+                if given == correct:
 
-                await message.channel.send(
-                    f"🎉 {message.author.mention} "
-                    f"hat **richtig** geraten!\n\n"
-                    f"✅ **Lösung:** "
-                    f"{current.get('answer')}\n"
-                    f"🏆 **+1 Punkt**\n"
-                    f"📊 **Gesamt:** "
-                    f"{points} Punkte",
-                    delete_after=5
-                )
+                    # EXAKT +1 PUNKT
+                    add_points(
+                        user_id,
+                        1
+                    )
 
-                await send_new_quiz_panel()
+                    points = get_points(
+                        user_id
+                    )
 
-                return
+                    try:
+                        await message.delete()
+                    except Exception:
+                        pass
+
+                    await message.channel.send(
+                        f"🎉 {message.author.mention} "
+                        f"hat **richtig** geraten!\n\n"
+                        f"✅ **Lösung:** "
+                        f"{current.get('answer')}\n"
+                        f"🏆 **+1 Punkt**\n"
+                        f"📊 **Gesamt:** "
+                        f"{points} Punkte",
+                        delete_after=5
+                    )
+
+                    await send_new_quiz_panel()
+
+                    return
 
             wrong_message = await message.channel.send(
                 f"❌ {message.author.mention} "
@@ -2629,9 +2108,7 @@ async def on_message(
                 f"war nicht richtig."
             )
 
-            await asyncio.sleep(
-                4
-            )
+            await asyncio.sleep(4)
 
             try:
                 await message.delete()
@@ -2645,10 +2122,8 @@ async def on_message(
 
             return
 
-    # Commands NUR auf dem erlaubten Server
-    await bot.process_commands(
-        message
-    )
+    # Commands nur auf dem erlaubten Server
+    await bot.process_commands(message)
 
 
 # =========================================================
@@ -2664,10 +2139,6 @@ async def on_ready():
         f"Bot online: {bot.user} "
         f"(ID: {bot.user.id})"
     )
-
-    # =====================================================
-    # PRÜFEN, OB DER ERLAUBTE SERVER VORHANDEN IST
-    # =====================================================
 
     guild = bot.get_guild(
         ALLOWED_GUILD_ID
@@ -2696,68 +2167,24 @@ async def on_ready():
     # PERSISTENTE VIEWS
     # =====================================================
 
-    try:
-        bot.add_view(
-            NametagView()
-        )
-    except Exception as e:
-        console_log(
-            f"Nametag View Fehler: {e}"
-        )
+    persistent_views = [
+        NametagView(),
+        LicensePlateView(),
+        DeveloperShiftView(),
+        DeveloperApplicationView(),
+        CommunityPanelView(),
+        DeveloperTaskPanelView(),
+        EmojiQuizView()
+    ]
 
-    try:
-        bot.add_view(
-            LicensePlateView()
-        )
-    except Exception as e:
-        console_log(
-            f"Kennzeichen View Fehler: {e}"
-        )
+    for view in persistent_views:
 
-    try:
-        bot.add_view(
-            DeveloperShiftView()
-        )
-    except Exception as e:
-        console_log(
-            f"Schicht View Fehler: {e}"
-        )
-
-    try:
-        bot.add_view(
-            DeveloperApplicationView()
-        )
-    except Exception as e:
-        console_log(
-            f"Bewerbungs View Fehler: {e}"
-        )
-
-    try:
-        bot.add_view(
-            CommunityPanelView()
-        )
-    except Exception as e:
-        console_log(
-            f"Community View Fehler: {e}"
-        )
-
-    try:
-        bot.add_view(
-            DeveloperTaskPanelView()
-        )
-    except Exception as e:
-        console_log(
-            f"Task Panel View Fehler: {e}"
-        )
-
-    try:
-        bot.add_view(
-            EmojiQuizView()
-        )
-    except Exception as e:
-        console_log(
-            f"Emoji Quiz View Fehler: {e}"
-        )
+        try:
+            bot.add_view(view)
+        except Exception as e:
+            console_log(
+                f"Persistent View Fehler: {e}"
+            )
 
     # =====================================================
     # ALTE ENTWICKLERAUFGABEN
@@ -2766,15 +2193,10 @@ async def on_ready():
     for task_id in data["tasks"].keys():
 
         try:
-
             bot.add_view(
-                DeveloperTaskView(
-                    task_id
-                )
+                DeveloperTaskView(task_id)
             )
-
         except Exception as e:
-
             console_log(
                 f"Task View #{task_id} Fehler: {e}"
             )
@@ -2783,25 +2205,19 @@ async def on_ready():
     # OFFENE BEWERBUNGEN
     # =====================================================
 
-    for (
-        application_id,
-        application
-    ) in data["applications"].items():
+    for application_id, application in data[
+        "applications"
+    ].items():
 
-        if application.get(
-            "status"
-        ) == "open":
+        if application.get("status") == "open":
 
             try:
-
                 bot.add_view(
                     ApplicationDecisionView(
                         application_id
                     )
                 )
-
             except Exception as e:
-
                 console_log(
                     f"Bewerbungs-View "
                     f"#{application_id} Fehler: {e}"
@@ -2812,101 +2228,60 @@ async def on_ready():
     # =====================================================
 
     try:
-
         await sync_shift_roles()
-
     except Exception as e:
-
         console_log(
             f"Schichtrollen Fehler: {e}"
         )
 
     # =====================================================
-    # NAMETAG PANEL
+    # PANELS
     # =====================================================
 
     try:
-
         await refresh_nametag_panel()
-
     except Exception as e:
-
         console_log(
             f"Nametag-Panel Fehler: {e}"
         )
 
-    # =====================================================
-    # KENNZEICHEN PANEL
-    # =====================================================
-
     try:
-
         await update_license_panel()
-
     except Exception as e:
-
         console_log(
             f"Kennzeichen-Panel Fehler: {e}"
         )
 
-    # =====================================================
-    # DEVELOPER TASK PANEL
-    # =====================================================
-
     try:
-
         await refresh_task_panel()
-
     except Exception as e:
-
         console_log(
             f"Aufgaben-Panel Fehler: {e}"
         )
 
-    # =====================================================
-    # SCHICHT PANEL
-    # =====================================================
-
     try:
-
         await refresh_shift_panel()
-
     except Exception as e:
-
         console_log(
             f"Schicht-Panel Fehler: {e}"
         )
 
-    # =====================================================
-    # BEWERBUNGS PANEL
-    # =====================================================
-
     try:
-
         await refresh_application_panel()
-
     except Exception as e:
-
         console_log(
             f"Bewerbungs-Panel Fehler: {e}"
         )
 
-    # =====================================================
-    # EMOJI QUIZ
-    # =====================================================
-
     try:
-
         await ensure_quiz_panel()
-
     except Exception as e:
-
         console_log(
             f"Emoji-Quiz Fehler: {e}"
         )
 
     console_log(
-        "✅ Alle Panels wurden synchronisiert."
+        "✅ Alle Systeme wurden gestartet."
     )
 
 
@@ -2916,18 +2291,16 @@ async def on_ready():
 
 try:
 
-    bot.run(
-        TOKEN
-    )
+    bot.run(TOKEN)
 
 except discord.LoginFailure:
 
     print(
-        "FEHLER: Discord-Token ist falsch."
+        "❌ FEHLER: Discord-Token ist falsch."
     )
 
 except Exception as e:
 
     print(
-        f"FEHLER beim Starten des Bots: {e}"
+        f"❌ FEHLER beim Starten des Bots: {e}"
     )
